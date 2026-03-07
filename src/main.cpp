@@ -13,10 +13,9 @@ void setup() {
   Serial.begin(115200);
   Serial.println("\n=== BambuHelper Starting ===");
 
-  initDisplay();
+  loadSettings();        // load first so rotation/colors are ready
+  initDisplay();         // now uses dispSettings.rotation
   splashEnd = millis() + 2000;
-
-  loadSettings();
   setBacklight(brightness);
 }
 

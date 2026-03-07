@@ -8,9 +8,78 @@ uint8_t activePrinterIndex = 0;
 char wifiSSID[33] = {0};
 char wifiPass[65] = {0};
 uint8_t brightness = 200;
+DisplaySettings dispSettings;
 
 static Preferences prefs;
 
+// ---------------------------------------------------------------------------
+//  RGB565 <-> HTML hex conversion
+// ---------------------------------------------------------------------------
+uint16_t htmlToRgb565(const char* hex) {
+  // Skip '#' if present
+  if (hex[0] == '#') hex++;
+  uint32_t rgb = strtoul(hex, nullptr, 16);
+  uint8_t r = (rgb >> 16) & 0xFF;
+  uint8_t g = (rgb >> 8) & 0xFF;
+  uint8_t b = rgb & 0xFF;
+  return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+}
+
+void rgb565ToHtml(uint16_t c, char* buf) {
+  uint8_t r = ((c >> 11) & 0x1F) * 255 / 31;
+  uint8_t g = ((c >> 5) & 0x3F) * 255 / 63;
+  uint8_t b = (c & 0x1F) * 255 / 31;
+  snprintf(buf, 8, "#%02X%02X%02X", r, g, b);
+}
+
+// ---------------------------------------------------------------------------
+//  Default display settings (matches original config.h colors)
+// ---------------------------------------------------------------------------
+void defaultDisplaySettings(DisplaySettings& ds) {
+  ds.rotation = 0;
+  ds.bgColor = CLR_BG;
+  ds.trackColor = CLR_TRACK;
+
+  // Progress: green arc, green label, white value
+  ds.progress = { CLR_GREEN, CLR_GREEN, CLR_TEXT };
+  // Nozzle: orange arc, orange label, white value
+  ds.nozzle = { CLR_ORANGE, CLR_ORANGE, CLR_TEXT };
+  // Bed: cyan arc, cyan label, white value
+  ds.bed = { CLR_CYAN, CLR_CYAN, CLR_TEXT };
+  // Part fan: cyan arc, cyan label, white value
+  ds.partFan = { CLR_CYAN, CLR_CYAN, CLR_TEXT };
+  // Aux fan: orange arc, orange label, white value
+  ds.auxFan = { CLR_ORANGE, CLR_ORANGE, CLR_TEXT };
+  // Chamber fan: green arc, green label, white value
+  ds.chamberFan = { CLR_GREEN, CLR_GREEN, CLR_TEXT };
+}
+
+// ---------------------------------------------------------------------------
+//  Save/load a single GaugeColors struct
+// ---------------------------------------------------------------------------
+static void saveGaugeColors(const char* prefix, const GaugeColors& gc) {
+  char key[16];
+  snprintf(key, sizeof(key), "%s_a", prefix);
+  prefs.putUShort(key, gc.arc);
+  snprintf(key, sizeof(key), "%s_l", prefix);
+  prefs.putUShort(key, gc.label);
+  snprintf(key, sizeof(key), "%s_v", prefix);
+  prefs.putUShort(key, gc.value);
+}
+
+static void loadGaugeColors(const char* prefix, GaugeColors& gc, const GaugeColors& def) {
+  char key[16];
+  snprintf(key, sizeof(key), "%s_a", prefix);
+  gc.arc = prefs.getUShort(key, def.arc);
+  snprintf(key, sizeof(key), "%s_l", prefix);
+  gc.label = prefs.getUShort(key, def.label);
+  snprintf(key, sizeof(key), "%s_v", prefix);
+  gc.value = prefs.getUShort(key, def.value);
+}
+
+// ---------------------------------------------------------------------------
+//  Load settings
+// ---------------------------------------------------------------------------
 void loadSettings() {
   prefs.begin(NVS_NAMESPACE, true);  // read-only
 
@@ -47,9 +116,27 @@ void loadSettings() {
     strcpy(printers[i].state.gcodeState, "UNKNOWN");
   }
 
+  // Display settings
+  DisplaySettings def;
+  defaultDisplaySettings(def);
+
+  dispSettings.rotation = prefs.getUChar("dsp_rot", def.rotation);
+  dispSettings.bgColor = prefs.getUShort("dsp_bg", def.bgColor);
+  dispSettings.trackColor = prefs.getUShort("dsp_trk", def.trackColor);
+
+  loadGaugeColors("gc_prg", dispSettings.progress, def.progress);
+  loadGaugeColors("gc_noz", dispSettings.nozzle, def.nozzle);
+  loadGaugeColors("gc_bed", dispSettings.bed, def.bed);
+  loadGaugeColors("gc_pfn", dispSettings.partFan, def.partFan);
+  loadGaugeColors("gc_afn", dispSettings.auxFan, def.auxFan);
+  loadGaugeColors("gc_cfn", dispSettings.chamberFan, def.chamberFan);
+
   prefs.end();
 }
 
+// ---------------------------------------------------------------------------
+//  Save settings
+// ---------------------------------------------------------------------------
 void saveSettings() {
   prefs.begin(NVS_NAMESPACE, false);
 
@@ -61,6 +148,18 @@ void saveSettings() {
   for (uint8_t i = 0; i < MAX_PRINTERS; i++) {
     savePrinterConfig(i);
   }
+
+  // Display settings
+  prefs.putUChar("dsp_rot", dispSettings.rotation);
+  prefs.putUShort("dsp_bg", dispSettings.bgColor);
+  prefs.putUShort("dsp_trk", dispSettings.trackColor);
+
+  saveGaugeColors("gc_prg", dispSettings.progress);
+  saveGaugeColors("gc_noz", dispSettings.nozzle);
+  saveGaugeColors("gc_bed", dispSettings.bed);
+  saveGaugeColors("gc_pfn", dispSettings.partFan);
+  saveGaugeColors("gc_afn", dispSettings.auxFan);
+  saveGaugeColors("gc_cfn", dispSettings.chamberFan);
 
   prefs.end();
 }

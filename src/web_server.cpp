@@ -2,6 +2,7 @@
 #include "settings.h"
 #include "bambu_state.h"
 #include "wifi_manager.h"
+#include "display_ui.h"
 #include "config.h"
 #include <WebServer.h>
 #include <ArduinoJson.h>
@@ -23,7 +24,7 @@ static const char PAGE_HTML[] PROGMEM = R"rawliteral(
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     background: #0D1117; color: #E6EDF3; padding: 16px;
-    max-width: 480px; margin: 0 auto;
+    max-width: 520px; margin: 0 auto;
   }
   h1 { color: #58A6FF; font-size: 22px; margin-bottom: 6px; }
   .subtitle { color: #8B949E; font-size: 13px; margin-bottom: 20px; }
@@ -33,12 +34,12 @@ static const char PAGE_HTML[] PROGMEM = R"rawliteral(
   }
   .card h2 { color: #58A6FF; font-size: 16px; margin-bottom: 12px; }
   label { display: block; color: #8B949E; font-size: 13px; margin-bottom: 4px; margin-top: 10px; }
-  input[type=text], input[type=password], input[type=number] {
+  input[type=text], input[type=password], input[type=number], select {
     width: 100%; padding: 8px 10px; border: 1px solid #30363D;
     border-radius: 6px; background: #0D1117; color: #E6EDF3;
     font-size: 14px; outline: none;
   }
-  input:focus { border-color: #58A6FF; }
+  input:focus, select:focus { border-color: #58A6FF; }
   input[type=range] { width: 100%; margin-top: 6px; }
   .check-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
   .check-row input { width: auto; }
@@ -50,6 +51,8 @@ static const char PAGE_HTML[] PROGMEM = R"rawliteral(
   }
   .btn-primary { background: #238636; color: #fff; }
   .btn-primary:hover { background: #2EA043; }
+  .btn-blue { background: #1F6FEB; color: #fff; }
+  .btn-blue:hover { background: #388BFD; }
   .btn-danger { background: #DA3633; color: #fff; font-size: 13px; padding: 8px; }
   .btn-danger:hover { background: #F85149; }
   .status {
@@ -62,14 +65,36 @@ static const char PAGE_HTML[] PROGMEM = R"rawliteral(
   #liveStats { margin-top: 10px; font-size: 12px; color: #8B949E; }
   .stat-row { display: flex; justify-content: space-between; padding: 2px 0; }
   .stat-val { color: #E6EDF3; }
+  .toast {
+    position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
+    background: #238636; color: #fff; padding: 10px 20px; border-radius: 8px;
+    font-size: 14px; font-weight: 600; display: none; z-index: 99;
+  }
+  .gauge-section { margin-top: 14px; padding: 10px; background: #0D1117; border-radius: 6px; }
+  .gauge-section h3 { font-size: 13px; color: #E6EDF3; margin-bottom: 8px; }
+  .color-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+  .color-row label { margin: 0; min-width: 55px; font-size: 12px; }
+  .color-row input[type=color] {
+    width: 36px; height: 28px; border: 1px solid #30363D; border-radius: 4px;
+    background: #0D1117; cursor: pointer; padding: 1px;
+  }
+  .theme-bar { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+  .theme-btn {
+    padding: 6px 12px; border: 1px solid #30363D; border-radius: 6px;
+    background: #0D1117; color: #8B949E; font-size: 12px; cursor: pointer;
+  }
+  .theme-btn:hover { border-color: #58A6FF; color: #E6EDF3; }
+  .global-colors { display: flex; gap: 16px; margin-bottom: 8px; }
+  .global-colors .color-row { margin: 0; }
 </style>
 </head>
 <body>
 <h1>BambuHelper</h1>
 <p class="subtitle">Bambu Lab Printer Monitor</p>
+<div id="toast" class="toast">Applied!</div>
 
+<!-- ===== WiFi & Printer (requires restart) ===== -->
 <form method="POST" action="/save">
-
 <div class="card">
   <h2>WiFi Settings</h2>
   <label for="ssid">WiFi SSID</label>
@@ -95,21 +120,183 @@ static const char PAGE_HTML[] PROGMEM = R"rawliteral(
   <input type="text" name="code" id="code" value="%CODE%" placeholder="12345678" maxlength="8">
   <div id="liveStats"></div>
 </div>
+<button type="submit" class="btn btn-primary">Save WiFi/Printer &amp; Restart</button>
+</form>
 
+<!-- ===== Display (live apply, no restart) ===== -->
 <div class="card">
   <h2>Display</h2>
   <label for="bright">Brightness: <span id="brightVal">%BRIGHT%</span></label>
   <input type="range" name="bright" id="bright" min="10" max="255" value="%BRIGHT%"
          oninput="document.getElementById('brightVal').textContent=this.value">
+
+  <label for="rotation">Screen Rotation</label>
+  <select name="rotation" id="rotation">
+    <option value="0" %ROT0%>0&deg; (default)</option>
+    <option value="1" %ROT1%>90&deg;</option>
+    <option value="2" %ROT2%>180&deg;</option>
+    <option value="3" %ROT3%>270&deg;</option>
+  </select>
 </div>
 
-<button type="submit" class="btn btn-primary">Save &amp; Restart</button>
-</form>
+<div class="card">
+  <h2>Gauge Colors</h2>
+
+  <div class="theme-bar">
+    <button type="button" class="theme-btn" onclick="applyTheme('default')">Default</button>
+    <button type="button" class="theme-btn" onclick="applyTheme('mono_green')">Mono Green</button>
+    <button type="button" class="theme-btn" onclick="applyTheme('neon')">Neon</button>
+    <button type="button" class="theme-btn" onclick="applyTheme('warm')">Warm</button>
+    <button type="button" class="theme-btn" onclick="applyTheme('ocean')">Ocean</button>
+  </div>
+
+  <div class="global-colors">
+    <div class="color-row">
+      <label>Background</label>
+      <input type="color" name="clr_bg" id="clr_bg" value="%CLR_BG%">
+    </div>
+    <div class="color-row">
+      <label>Track</label>
+      <input type="color" name="clr_track" id="clr_track" value="%CLR_TRACK%">
+    </div>
+  </div>
+
+  <div class="gauge-section">
+    <h3>Progress</h3>
+    <div class="color-row">
+      <label>Arc</label><input type="color" name="prg_a" id="prg_a" value="%PRG_A%">
+      <label>Label</label><input type="color" name="prg_l" id="prg_l" value="%PRG_L%">
+      <label>Value</label><input type="color" name="prg_v" id="prg_v" value="%PRG_V%">
+    </div>
+  </div>
+
+  <div class="gauge-section">
+    <h3>Nozzle</h3>
+    <div class="color-row">
+      <label>Arc</label><input type="color" name="noz_a" id="noz_a" value="%NOZ_A%">
+      <label>Label</label><input type="color" name="noz_l" id="noz_l" value="%NOZ_L%">
+      <label>Value</label><input type="color" name="noz_v" id="noz_v" value="%NOZ_V%">
+    </div>
+  </div>
+
+  <div class="gauge-section">
+    <h3>Bed</h3>
+    <div class="color-row">
+      <label>Arc</label><input type="color" name="bed_a" id="bed_a" value="%BED_A%">
+      <label>Label</label><input type="color" name="bed_l" id="bed_l" value="%BED_L%">
+      <label>Value</label><input type="color" name="bed_v" id="bed_v" value="%BED_V%">
+    </div>
+  </div>
+
+  <div class="gauge-section">
+    <h3>Part Fan</h3>
+    <div class="color-row">
+      <label>Arc</label><input type="color" name="pfn_a" id="pfn_a" value="%PFN_A%">
+      <label>Label</label><input type="color" name="pfn_l" id="pfn_l" value="%PFN_L%">
+      <label>Value</label><input type="color" name="pfn_v" id="pfn_v" value="%PFN_V%">
+    </div>
+  </div>
+
+  <div class="gauge-section">
+    <h3>Aux Fan</h3>
+    <div class="color-row">
+      <label>Arc</label><input type="color" name="afn_a" id="afn_a" value="%AFN_A%">
+      <label>Label</label><input type="color" name="afn_l" id="afn_l" value="%AFN_L%">
+      <label>Value</label><input type="color" name="afn_v" id="afn_v" value="%AFN_V%">
+    </div>
+  </div>
+
+  <div class="gauge-section">
+    <h3>Chamber Fan</h3>
+    <div class="color-row">
+      <label>Arc</label><input type="color" name="cfn_a" id="cfn_a" value="%CFN_A%">
+      <label>Label</label><input type="color" name="cfn_l" id="cfn_l" value="%CFN_L%">
+      <label>Value</label><input type="color" name="cfn_v" id="cfn_v" value="%CFN_V%">
+    </div>
+  </div>
+</div>
+
+<button type="button" class="btn btn-blue" onclick="applyDisplay()">Apply Display Settings</button>
 
 <button class="btn btn-danger" style="margin-top:10px"
         onclick="if(confirm('Reset all settings?'))location='/reset'">Factory Reset</button>
 
 <script>
+var themes={
+  default:{bg:'#081018',track:'#182028',
+    prg:{a:'#00FF00',l:'#00FF00',v:'#FFFFFF'},
+    noz:{a:'#FFA500',l:'#FFA500',v:'#FFFFFF'},
+    bed:{a:'#00FFFF',l:'#00FFFF',v:'#FFFFFF'},
+    pfn:{a:'#00FFFF',l:'#00FFFF',v:'#FFFFFF'},
+    afn:{a:'#FFA500',l:'#FFA500',v:'#FFFFFF'},
+    cfn:{a:'#00FF00',l:'#00FF00',v:'#FFFFFF'}},
+  mono_green:{bg:'#000800',track:'#0A1A0A',
+    prg:{a:'#00FF41',l:'#00CC33',v:'#00FF41'},
+    noz:{a:'#00FF41',l:'#00CC33',v:'#00FF41'},
+    bed:{a:'#00FF41',l:'#00CC33',v:'#00FF41'},
+    pfn:{a:'#00FF41',l:'#00CC33',v:'#00FF41'},
+    afn:{a:'#00FF41',l:'#00CC33',v:'#00FF41'},
+    cfn:{a:'#00FF41',l:'#00CC33',v:'#00FF41'}},
+  neon:{bg:'#0A0014',track:'#1A0A2E',
+    prg:{a:'#FF00FF',l:'#FF00FF',v:'#FFFFFF'},
+    noz:{a:'#FF4400',l:'#FF6600',v:'#FFFFFF'},
+    bed:{a:'#00FFFF',l:'#00FFFF',v:'#FFFFFF'},
+    pfn:{a:'#00FF88',l:'#00FF88',v:'#FFFFFF'},
+    afn:{a:'#FFFF00',l:'#FFFF00',v:'#FFFFFF'},
+    cfn:{a:'#FF00FF',l:'#FF00FF',v:'#FFFFFF'}},
+  warm:{bg:'#140A00',track:'#2E1A08',
+    prg:{a:'#FFB347',l:'#FFB347',v:'#FFEEDD'},
+    noz:{a:'#FF6347',l:'#FF6347',v:'#FFEEDD'},
+    bed:{a:'#FFA500',l:'#FFA500',v:'#FFEEDD'},
+    pfn:{a:'#FFD700',l:'#FFD700',v:'#FFEEDD'},
+    afn:{a:'#FF8C00',l:'#FF8C00',v:'#FFEEDD'},
+    cfn:{a:'#FFB347',l:'#FFB347',v:'#FFEEDD'}},
+  ocean:{bg:'#000A14',track:'#0A1A2E',
+    prg:{a:'#00BFFF',l:'#00BFFF',v:'#E0F0FF'},
+    noz:{a:'#FF7F50',l:'#FF7F50',v:'#E0F0FF'},
+    bed:{a:'#4169E1',l:'#4169E1',v:'#E0F0FF'},
+    pfn:{a:'#00CED1',l:'#00CED1',v:'#E0F0FF'},
+    afn:{a:'#48D1CC',l:'#48D1CC',v:'#E0F0FF'},
+    cfn:{a:'#20B2AA',l:'#20B2AA',v:'#E0F0FF'}}
+};
+
+function applyTheme(name){
+  var t=themes[name]; if(!t) return;
+  document.getElementById('clr_bg').value=t.bg;
+  document.getElementById('clr_track').value=t.track;
+  var g=['prg','noz','bed','pfn','afn','cfn'];
+  for(var i=0;i<g.length;i++){
+    var c=t[g[i]];
+    document.getElementById(g[i]+'_a').value=c.a;
+    document.getElementById(g[i]+'_l').value=c.l;
+    document.getElementById(g[i]+'_v').value=c.v;
+  }
+}
+
+function showToast(msg){
+  var t=document.getElementById('toast');
+  t.textContent=msg||'Applied!';
+  t.style.display='block';
+  setTimeout(function(){t.style.display='none';},2000);
+}
+
+function applyDisplay(){
+  var p=new URLSearchParams();
+  p.append('bright',document.getElementById('bright').value);
+  p.append('rotation',document.getElementById('rotation').value);
+  p.append('clr_bg',document.getElementById('clr_bg').value);
+  p.append('clr_track',document.getElementById('clr_track').value);
+  var g=['prg','noz','bed','pfn','afn','cfn'];
+  for(var i=0;i<g.length;i++){
+    p.append(g[i]+'_a',document.getElementById(g[i]+'_a').value);
+    p.append(g[i]+'_l',document.getElementById(g[i]+'_l').value);
+    p.append(g[i]+'_v',document.getElementById(g[i]+'_v').value);
+  }
+  fetch('/apply',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:p.toString()}).then(function(r){
+    if(r.ok) showToast('Applied!'); else showToast('Error');
+  }).catch(function(){showToast('Error');});
+}
+
 setInterval(function(){
   fetch('/status').then(r=>r.json()).then(d=>{
     var h='';
@@ -134,6 +321,26 @@ setInterval(function(){
 )rawliteral";
 
 // ---------------------------------------------------------------------------
+//  Helper: replace gauge color placeholders
+// ---------------------------------------------------------------------------
+static void replaceGaugeColors(String& page, const char* prefix, const GaugeColors& gc) {
+  char buf[8];
+  char placeholder[12];
+
+  snprintf(placeholder, sizeof(placeholder), "%%%s_A%%", prefix);
+  rgb565ToHtml(gc.arc, buf);
+  page.replace(placeholder, buf);
+
+  snprintf(placeholder, sizeof(placeholder), "%%%s_L%%", prefix);
+  rgb565ToHtml(gc.label, buf);
+  page.replace(placeholder, buf);
+
+  snprintf(placeholder, sizeof(placeholder), "%%%s_V%%", prefix);
+  rgb565ToHtml(gc.value, buf);
+  page.replace(placeholder, buf);
+}
+
+// ---------------------------------------------------------------------------
 //  Template processor
 // ---------------------------------------------------------------------------
 static String processTemplate(const String& html) {
@@ -150,6 +357,27 @@ static String processTemplate(const String& html) {
   page.replace("%CODE%", cfg.accessCode);
   page.replace("%BRIGHT%", String(brightness));
 
+  // Rotation dropdown
+  page.replace("%ROT0%", dispSettings.rotation == 0 ? "selected" : "");
+  page.replace("%ROT1%", dispSettings.rotation == 1 ? "selected" : "");
+  page.replace("%ROT2%", dispSettings.rotation == 2 ? "selected" : "");
+  page.replace("%ROT3%", dispSettings.rotation == 3 ? "selected" : "");
+
+  // Global colors
+  char buf[8];
+  rgb565ToHtml(dispSettings.bgColor, buf);
+  page.replace("%CLR_BG%", buf);
+  rgb565ToHtml(dispSettings.trackColor, buf);
+  page.replace("%CLR_TRACK%", buf);
+
+  // Per-gauge colors
+  replaceGaugeColors(page, "PRG", dispSettings.progress);
+  replaceGaugeColors(page, "NOZ", dispSettings.nozzle);
+  replaceGaugeColors(page, "BED", dispSettings.bed);
+  replaceGaugeColors(page, "PFN", dispSettings.partFan);
+  replaceGaugeColors(page, "AFN", dispSettings.auxFan);
+  replaceGaugeColors(page, "CFN", dispSettings.chamberFan);
+
   if (cfg.enabled && st.connected) {
     page.replace("%STATUS_CLASS%", "status status-ok");
     page.replace("%STATUS_TEXT%", "Connected");
@@ -165,6 +393,42 @@ static String processTemplate(const String& html) {
 }
 
 // ---------------------------------------------------------------------------
+//  Helper: read gauge colors from form
+// ---------------------------------------------------------------------------
+static void readGaugeColorsFromForm(const char* prefix, GaugeColors& gc) {
+  char key[8];
+  snprintf(key, sizeof(key), "%s_a", prefix);
+  if (server.hasArg(key)) gc.arc = htmlToRgb565(server.arg(key).c_str());
+  snprintf(key, sizeof(key), "%s_l", prefix);
+  if (server.hasArg(key)) gc.label = htmlToRgb565(server.arg(key).c_str());
+  snprintf(key, sizeof(key), "%s_v", prefix);
+  if (server.hasArg(key)) gc.value = htmlToRgb565(server.arg(key).c_str());
+}
+
+// ---------------------------------------------------------------------------
+//  Read display settings from form args (shared by /save and /apply)
+// ---------------------------------------------------------------------------
+static void readDisplayFromForm() {
+  if (server.hasArg("bright")) {
+    brightness = server.arg("bright").toInt();
+    setBacklight(brightness);
+  }
+  if (server.hasArg("rotation")) {
+    uint8_t rot = server.arg("rotation").toInt();
+    if (rot <= 3) dispSettings.rotation = rot;
+  }
+  if (server.hasArg("clr_bg"))    dispSettings.bgColor = htmlToRgb565(server.arg("clr_bg").c_str());
+  if (server.hasArg("clr_track")) dispSettings.trackColor = htmlToRgb565(server.arg("clr_track").c_str());
+
+  readGaugeColorsFromForm("prg", dispSettings.progress);
+  readGaugeColorsFromForm("noz", dispSettings.nozzle);
+  readGaugeColorsFromForm("bed", dispSettings.bed);
+  readGaugeColorsFromForm("pfn", dispSettings.partFan);
+  readGaugeColorsFromForm("afn", dispSettings.auxFan);
+  readGaugeColorsFromForm("cfn", dispSettings.chamberFan);
+}
+
+// ---------------------------------------------------------------------------
 //  Route handlers
 // ---------------------------------------------------------------------------
 static void handleRoot() {
@@ -172,8 +436,8 @@ static void handleRoot() {
   server.send(200, "text/html", processTemplate(html));
 }
 
+// Save WiFi + Printer settings (requires restart)
 static void handleSave() {
-  // WiFi
   if (server.hasArg("ssid")) {
     strlcpy(wifiSSID, server.arg("ssid").c_str(), sizeof(wifiSSID));
   }
@@ -181,27 +445,13 @@ static void handleSave() {
     strlcpy(wifiPass, server.arg("pass").c_str(), sizeof(wifiPass));
   }
 
-  // Printer 0
   PrinterConfig& cfg = printers[0].config;
   cfg.enabled = server.hasArg("enabled");
 
-  if (server.hasArg("pname")) {
-    strlcpy(cfg.name, server.arg("pname").c_str(), sizeof(cfg.name));
-  }
-  if (server.hasArg("ip")) {
-    strlcpy(cfg.ip, server.arg("ip").c_str(), sizeof(cfg.ip));
-  }
-  if (server.hasArg("serial")) {
-    strlcpy(cfg.serial, server.arg("serial").c_str(), sizeof(cfg.serial));
-  }
-  if (server.hasArg("code")) {
-    strlcpy(cfg.accessCode, server.arg("code").c_str(), sizeof(cfg.accessCode));
-  }
-
-  // Brightness
-  if (server.hasArg("bright")) {
-    brightness = server.arg("bright").toInt();
-  }
+  if (server.hasArg("pname")) strlcpy(cfg.name, server.arg("pname").c_str(), sizeof(cfg.name));
+  if (server.hasArg("ip"))    strlcpy(cfg.ip, server.arg("ip").c_str(), sizeof(cfg.ip));
+  if (server.hasArg("serial"))strlcpy(cfg.serial, server.arg("serial").c_str(), sizeof(cfg.serial));
+  if (server.hasArg("code"))  strlcpy(cfg.accessCode, server.arg("code").c_str(), sizeof(cfg.accessCode));
 
   saveSettings();
 
@@ -212,6 +462,14 @@ static void handleSave() {
 
   delay(1000);
   ESP.restart();
+}
+
+// Apply display settings live (no restart)
+static void handleApply() {
+  readDisplayFromForm();
+  saveSettings();
+  applyDisplaySettings();
+  server.send(200, "text/plain", "OK");
 }
 
 static void handleStatus() {
@@ -261,6 +519,7 @@ static void handleNotFound() {
 void initWebServer() {
   server.on("/", HTTP_GET, handleRoot);
   server.on("/save", HTTP_POST, handleSave);
+  server.on("/apply", HTTP_POST, handleApply);
   server.on("/status", HTTP_GET, handleStatus);
   server.on("/reset", HTTP_GET, handleReset);
   server.onNotFound(handleNotFound);

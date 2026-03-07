@@ -39,7 +39,7 @@
 #define BAMBU_RECONNECT_INTERVAL    10000   // 10s between attempts
 #define BAMBU_STALE_TIMEOUT         60000   // 60s no data = stale
 #define BAMBU_PUSHALL_INTERVAL      30000   // request full status every 30s
-#define BAMBU_PUSHALL_INITIAL_DELAY 8000    // wait 8s after connect
+#define BAMBU_PUSHALL_INITIAL_DELAY 2000    // wait 2s after connect
 #define BAMBU_MIN_FREE_HEAP         40000   // min heap for TLS allocation
 #define BAMBU_KEEPALIVE             60
 

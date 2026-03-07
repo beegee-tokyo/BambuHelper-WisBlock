@@ -4,6 +4,7 @@
 #include "icons.h"
 #include "config.h"
 #include "bambu_state.h"
+#include "settings.h"
 #include <SPI.h>
 
 TFT_eSPI tft = TFT_eSPI();
@@ -15,6 +16,7 @@ static unsigned long lastDisplayUpdate = 0;
 
 // Previous state for smart redraw
 static BambuState prevState;
+static unsigned long connectScreenStart = 0;
 
 // ---------------------------------------------------------------------------
 //  Backlight
@@ -38,7 +40,7 @@ void initDisplay() {
   Serial.flush();
   tft.init();
   Serial.println("Display: tft.init() done");
-  tft.setRotation(0);
+  tft.setRotation(dispSettings.rotation);
   Serial.println("Display: setRotation done");
   tft.fillScreen(CLR_BG);
   Serial.println("Display: fillScreen done");
@@ -60,6 +62,12 @@ void initDisplay() {
   tft.drawString("Printer Monitor", SCREEN_W / 2, SCREEN_H / 2 + 10);
   tft.setTextFont(1);
   tft.drawString("v1.0", SCREEN_W / 2, SCREEN_H / 2 + 30);
+}
+
+void applyDisplaySettings() {
+  tft.setRotation(dispSettings.rotation);
+  tft.fillScreen(dispSettings.bgColor);
+  forceRedraw = true;
 }
 
 void setScreenState(ScreenState state) {
@@ -166,6 +174,15 @@ static void drawConnectingMQTT() {
   tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
   tft.setTextFont(1);
   tft.drawString(p.config.ip, SCREEN_W / 2, SCREEN_H / 2 + 42);
+
+  // Elapsed time
+  if (connectScreenStart > 0) {
+    unsigned long elapsed = (millis() - connectScreenStart) / 1000;
+    char elBuf[16];
+    snprintf(elBuf, sizeof(elBuf), "%lus", elapsed);
+    tft.fillRect(SCREEN_W / 2 - 20, SCREEN_H / 2 + 52, 40, 12, CLR_BG);
+    tft.drawString(elBuf, SCREEN_W / 2, SCREEN_H / 2 + 58);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -202,12 +219,14 @@ static void drawIdle() {
   // Nozzle temp gauge
   drawTempGauge(tft, SCREEN_W / 2 - 55, 140, 30,
                 s.nozzleTemp, s.nozzleTarget, 300.0f,
-                CLR_ORANGE, "Nozzle", nullptr, forceRedraw);
+                dispSettings.nozzle.arc, "Nozzle", nullptr, forceRedraw,
+                &dispSettings.nozzle);
 
   // Bed temp gauge
   drawTempGauge(tft, SCREEN_W / 2 + 55, 140, 30,
                 s.bedTemp, s.bedTarget, 120.0f,
-                CLR_CYAN, "Bed", nullptr, forceRedraw);
+                dispSettings.bed.arc, "Bed", nullptr, forceRedraw,
+                &dispSettings.bed);
 
   // WiFi signal at bottom
   tft.setTextFont(1);
@@ -293,24 +312,29 @@ static void drawPrinting() {
   if (tempChanged) {
     drawTempGauge(tft, col2, row1Y, gR,
                   s.nozzleTemp, s.nozzleTarget, 300.0f,
-                  CLR_ORANGE, "Nozzle", nullptr, forceRedraw);
+                  dispSettings.nozzle.arc, "Nozzle", nullptr, forceRedraw,
+                  &dispSettings.nozzle);
 
     drawTempGauge(tft, col3, row1Y, gR,
                   s.bedTemp, s.bedTarget, 120.0f,
-                  CLR_CYAN, "Bed", nullptr, forceRedraw);
+                  dispSettings.bed.arc, "Bed", nullptr, forceRedraw,
+                  &dispSettings.bed);
   }
 
   // === Row 2: Part Fan | Aux Fan | Chamber Fan (y=106-176) ===
 
   if (fansChanged) {
     drawFanGauge(tft, col1, row2Y, gR,
-                 s.coolingFanPct, CLR_CYAN, "Part", forceRedraw);
+                 s.coolingFanPct, dispSettings.partFan.arc, "Part", forceRedraw,
+                 &dispSettings.partFan);
 
     drawFanGauge(tft, col2, row2Y, gR,
-                 s.auxFanPct, CLR_ORANGE, "Aux", forceRedraw);
+                 s.auxFanPct, dispSettings.auxFan.arc, "Aux", forceRedraw,
+                 &dispSettings.auxFan);
 
     drawFanGauge(tft, col3, row2Y, gR,
-                 s.chamberFanPct, CLR_GREEN, "Chamber", forceRedraw);
+                 s.chamberFanPct, dispSettings.chamberFan.arc, "Chamber", forceRedraw,
+                 &dispSettings.chamberFan);
   }
 
   // === Info line — layer count (below row 2 labels) ===
@@ -391,8 +415,11 @@ void updateDisplay() {
 
   // Detect screen change
   if (currentScreen != prevScreen) {
-    tft.fillScreen(CLR_BG);
+    tft.fillScreen(dispSettings.bgColor);
     forceRedraw = true;
+    if (currentScreen == SCREEN_CONNECTING_MQTT) {
+      connectScreenStart = millis();
+    }
     prevScreen = currentScreen;
   }
 

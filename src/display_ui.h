@@ -20,5 +20,6 @@ void updateDisplay();
 void setScreenState(ScreenState state);
 ScreenState getScreenState();
 void setBacklight(uint8_t level);
+void applyDisplaySettings();  // re-apply rotation, bg, force redraw
 
 #endif // DISPLAY_UI_H

@@ -257,7 +257,7 @@ void initBambuMqtt() {
 
   initialPushallSent = false;
   connectTime = 0;
-  lastReconnectAttempt = millis();
+  lastReconnectAttempt = 0;  // allow immediate first connect attempt
 }
 
 void handleBambuMqtt() {
