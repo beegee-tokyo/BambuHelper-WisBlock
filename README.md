@@ -4,6 +4,12 @@ Dedicated Bambu Lab P1S printer monitor built with ESP32-S3 Super Mini and a 1.5
 
 Connects to your printer via MQTT over TLS and displays a real-time dashboard with arc gauges, animations, and live stats.
 
+## Screenshots
+
+| Dashboard | Web Interface — Settings | Web Interface — Gauge Colors |
+|---|---|---|
+| ![Dashboard](IMG/interface1.jpg) | ![Settings](IMG/screen1.png) | ![Gauge Colors](IMG/screen2.png) |
+
 ## Features
 
 - **Live dashboard** — progress arc, temperature gauges, fan speed, layer count, time remaining
