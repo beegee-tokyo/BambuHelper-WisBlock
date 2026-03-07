@@ -206,23 +206,25 @@ static void mqttCallback(char* topic, byte* payload, unsigned int length) {
   if (print["total_layer_num"].is<int>())
     s.totalLayers = print["total_layer_num"].as<int>();
 
-  // Fan speeds (Bambu sends 0-15, map to 0-100%)
-  if (print["cooling_fan_speed"].is<int>()) {
-    int v = print["cooling_fan_speed"].as<int>();
-    s.coolingFanPct = (v * 100) / 15;
-  }
-  if (print["big_fan1_speed"].is<int>()) {
-    int v = print["big_fan1_speed"].as<int>();
-    s.auxFanPct = (v * 100) / 15;
-  }
-  if (print["big_fan2_speed"].is<int>()) {
-    int v = print["big_fan2_speed"].as<int>();
-    s.chamberFanPct = (v * 100) / 15;
-  }
-  if (print["heatbreak_fan_speed"].is<int>()) {
-    int v = print["heatbreak_fan_speed"].as<int>();
-    s.heatbreakFanPct = (v * 100) / 15;
-  }
+  // Fan speeds (Bambu sends 0-15, may arrive as int or string)
+  auto parseFan = [](JsonVariant v) -> int {
+    if (v.is<int>()) return v.as<int>();
+    if (v.is<const char*>()) return atoi(v.as<const char*>());
+    return -1;  // not present
+  };
+
+  int fanVal;
+  fanVal = parseFan(print["cooling_fan_speed"]);
+  if (fanVal >= 0) s.coolingFanPct = (fanVal * 100) / 15;
+
+  fanVal = parseFan(print["big_fan1_speed"]);
+  if (fanVal >= 0) s.auxFanPct = (fanVal * 100) / 15;
+
+  fanVal = parseFan(print["big_fan2_speed"]);
+  if (fanVal >= 0) s.chamberFanPct = (fanVal * 100) / 15;
+
+  fanVal = parseFan(print["heatbreak_fan_speed"]);
+  if (fanVal >= 0) s.heatbreakFanPct = (fanVal * 100) / 15;
 
   // WiFi signal
   if (print["wifi_signal"].is<int>())

@@ -6,15 +6,20 @@
 // Draw H2-style LED progress bar (full-width, top of screen)
 void drawLedProgressBar(TFT_eSPI& tft, int16_t y, uint8_t progress);
 
-// Draw large 270-degree progress arc with percentage and time in center
+// Draw 270-degree progress arc with percentage and time in center
 void drawProgressArc(TFT_eSPI& tft, int16_t cx, int16_t cy, int16_t radius,
                      int16_t thickness, uint8_t progress, uint8_t prevProgress,
                      uint16_t remainingMin, bool forceRedraw);
 
-// Draw mini 180-degree temperature arc gauge
+// Draw 270-degree temperature arc gauge with current/target
 void drawTempGauge(TFT_eSPI& tft, int16_t cx, int16_t cy, int16_t radius,
                    float current, float target, float maxTemp,
                    uint16_t accentColor, const char* label,
                    const uint8_t* icon, bool forceRedraw);
+
+// Draw 270-degree fan speed gauge (0-100%)
+void drawFanGauge(TFT_eSPI& tft, int16_t cx, int16_t cy, int16_t radius,
+                  uint8_t percent, uint16_t accentColor, const char* label,
+                  bool forceRedraw);
 
 #endif // DISPLAY_GAUGES_H

@@ -8,6 +8,10 @@
 static bool apMode = false;
 static DNSServer* dnsServer = nullptr;
 static unsigned long disconnectTime = 0;
+static unsigned long lastReconnectAttempt = 0;
+static uint8_t reconnectAttempts = 0;
+static const uint8_t MAX_RECONNECT_ATTEMPTS = 5;
+static const unsigned long RECONNECT_INTERVAL = 10000;  // 10s between attempts
 static String apSSID;
 
 bool isWiFiConnected() {
@@ -87,12 +91,30 @@ void handleWiFi() {
   if (WiFi.status() != WL_CONNECTED) {
     if (disconnectTime == 0) {
       disconnectTime = millis();
-      Serial.println("WiFi disconnected, waiting for reconnect...");
-    } else if (millis() - disconnectTime > WIFI_RECONNECT_TIMEOUT) {
-      Serial.println("WiFi timeout, switching to AP mode");
+      lastReconnectAttempt = 0;
+      reconnectAttempts = 0;
+      Serial.println("WiFi disconnected, will try to reconnect...");
+    }
+
+    // Actively try to reconnect at intervals
+    if (millis() - lastReconnectAttempt > RECONNECT_INTERVAL) {
+      lastReconnectAttempt = millis();
+      reconnectAttempts++;
+      Serial.printf("WiFi reconnect attempt %d/%d\n", reconnectAttempts, MAX_RECONNECT_ATTEMPTS);
+      WiFi.disconnect();
+      WiFi.begin(wifiSSID, wifiPass);
+    }
+
+    // Only fall back to AP after all attempts exhausted
+    if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+      Serial.println("WiFi reconnect failed, switching to AP mode");
       startAP();
     }
   } else {
+    if (disconnectTime > 0) {
+      Serial.println("WiFi reconnected!");
+    }
     disconnectTime = 0;
+    reconnectAttempts = 0;
   }
 }

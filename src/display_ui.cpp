@@ -4,6 +4,7 @@
 #include "icons.h"
 #include "config.h"
 #include "bambu_state.h"
+#include <SPI.h>
 
 TFT_eSPI tft = TFT_eSPI();
 
@@ -19,8 +20,8 @@ static BambuState prevState;
 //  Backlight
 // ---------------------------------------------------------------------------
 void setBacklight(uint8_t level) {
-#ifdef BACKLIGHT_PIN
-  ledcWrite(BACKLIGHT_CH, level);
+#if defined(BACKLIGHT_PIN) && BACKLIGHT_PIN >= 0
+  analogWrite(BACKLIGHT_PIN, level);
 #endif
 }
 
@@ -28,13 +29,22 @@ void setBacklight(uint8_t level) {
 //  Init
 // ---------------------------------------------------------------------------
 void initDisplay() {
+  Serial.println("Display: pre-init delay...");
+  delay(500);
+  Serial.println("Display: SPI.begin()...");
+  Serial.flush();
+  SPI.begin(TFT_SCLK, -1, TFT_MOSI, TFT_CS);
+  Serial.println("Display: calling tft.init()...");
+  Serial.flush();
   tft.init();
+  Serial.println("Display: tft.init() done");
   tft.setRotation(0);
+  Serial.println("Display: setRotation done");
   tft.fillScreen(CLR_BG);
+  Serial.println("Display: fillScreen done");
 
-#ifdef BACKLIGHT_PIN
-  ledcSetup(BACKLIGHT_CH, BACKLIGHT_FREQ, BACKLIGHT_RES);
-  ledcAttachPin(BACKLIGHT_PIN, BACKLIGHT_CH);
+#if defined(BACKLIGHT_PIN) && BACKLIGHT_PIN >= 0
+  pinMode(BACKLIGHT_PIN, OUTPUT);
   setBacklight(200);
 #endif
 
@@ -192,12 +202,12 @@ static void drawIdle() {
   // Nozzle temp gauge
   drawTempGauge(tft, SCREEN_W / 2 - 55, 140, 30,
                 s.nozzleTemp, s.nozzleTarget, 300.0f,
-                CLR_ORANGE, "Nozzle", icon_nozzle, forceRedraw);
+                CLR_ORANGE, "Nozzle", nullptr, forceRedraw);
 
   // Bed temp gauge
   drawTempGauge(tft, SCREEN_W / 2 + 55, 140, 30,
                 s.bedTemp, s.bedTarget, 120.0f,
-                CLR_CYAN, "Bed", icon_bed, forceRedraw);
+                CLR_CYAN, "Bed", nullptr, forceRedraw);
 
   // WiFi signal at bottom
   tft.setTextFont(1);
@@ -210,6 +220,7 @@ static void drawIdle() {
 
 // ---------------------------------------------------------------------------
 //  Screen: Printing (main dashboard)
+//  Layout: LED bar | header | 2x3 gauge grid | info line
 // ---------------------------------------------------------------------------
 static void drawPrinting() {
   PrinterSlot& p = activePrinter();
@@ -225,12 +236,21 @@ static void drawPrinting() {
                      (s.layerNum != prevState.layerNum) ||
                      (s.totalLayers != prevState.totalLayers) ||
                      (strcmp(s.subtaskName, prevState.subtaskName) != 0);
-  bool metricsChanged = forceRedraw ||
-                        (s.coolingFanPct != prevState.coolingFanPct) ||
-                        (s.speedLevel != prevState.speedLevel) ||
-                        (s.wifiSignal != prevState.wifiSignal);
+  bool fansChanged = forceRedraw ||
+                     (s.coolingFanPct != prevState.coolingFanPct) ||
+                     (s.auxFanPct != prevState.auxFanPct) ||
+                     (s.chamberFanPct != prevState.chamberFanPct);
   bool stateChanged = forceRedraw ||
                       (strcmp(s.gcodeState, prevState.gcodeState) != 0);
+
+  // 2x3 gauge grid constants
+  const int16_t gR = 32;       // radius for all gauges
+  const int16_t gT = 6;        // thickness for progress arc
+  const int16_t col1 = 42;     // left column center X
+  const int16_t col2 = 120;    // middle column center X
+  const int16_t col3 = 198;    // right column center X
+  const int16_t row1Y = 60;    // row 1 center Y (progress, nozzle, bed)
+  const int16_t row2Y = 148;   // row 2 center Y (part fan, aux fan, chamb fan)
 
   // === H2-style LED progress bar (y=0-5) ===
   if (progChanged) {
@@ -255,80 +275,74 @@ static void drawPrinting() {
     else if (strcmp(s.gcodeState, "FAILED") == 0) badgeColor = CLR_RED;
     else if (strcmp(s.gcodeState, "PREPARE") == 0) badgeColor = CLR_BLUE;
 
-    tft.fillCircle(SCREEN_W - 60, 17, 4, badgeColor);
-    tft.setTextDatum(ML_DATUM);
+    tft.setTextDatum(MR_DATUM);
     tft.setTextColor(badgeColor, CLR_HEADER);
-    tft.setTextFont(1);
-    tft.drawString(s.gcodeState, SCREEN_W - 53, 17);
+    tft.setTextFont(2);
+    tft.fillCircle(SCREEN_W - 8 - tft.textWidth(s.gcodeState) - 10, 17, 4, badgeColor);
+    tft.drawString(s.gcodeState, SCREEN_W - 8, 17);
   }
 
-  // === Main progress arc (center, y=28-148) ===
+  // === Row 1: Progress | Nozzle | Bed (y=30-100) ===
+
   if (progChanged || forceRedraw) {
-    drawProgressArc(tft, SCREEN_W / 2, 88, 58, 10,
+    drawProgressArc(tft, col1, row1Y, gR, gT,
                     s.progress, prevState.progress,
                     s.remainingMinutes, forceRedraw);
   }
 
-  // === Temperature mini-gauges (y=148-198) ===
   if (tempChanged) {
-    drawTempGauge(tft, 60, 172, 26,
+    drawTempGauge(tft, col2, row1Y, gR,
                   s.nozzleTemp, s.nozzleTarget, 300.0f,
-                  CLR_ORANGE, "Nozzle", icon_nozzle, forceRedraw);
+                  CLR_ORANGE, "Nozzle", nullptr, forceRedraw);
 
-    drawTempGauge(tft, 180, 172, 26,
+    drawTempGauge(tft, col3, row1Y, gR,
                   s.bedTemp, s.bedTarget, 120.0f,
-                  CLR_CYAN, "Bed", icon_bed, forceRedraw);
+                  CLR_CYAN, "Bed", nullptr, forceRedraw);
   }
 
-  // === Metrics row (y=200-216) ===
-  if (metricsChanged) {
-    tft.fillRect(0, 200, SCREEN_W, 16, CLR_BG);
+  // === Row 2: Part Fan | Aux Fan | Chamber Fan (y=106-176) ===
 
-    tft.setTextFont(1);
-    tft.setTextDatum(TL_DATUM);
+  if (fansChanged) {
+    drawFanGauge(tft, col1, row2Y, gR,
+                 s.coolingFanPct, CLR_CYAN, "Part", forceRedraw);
 
-    // Fan icon + percentage
-    drawIcon16(tft, 4, 200, icon_fan, CLR_TEXT_DIM);
-    tft.setTextColor(CLR_TEXT, CLR_BG);
-    char fanBuf[8];
-    snprintf(fanBuf, sizeof(fanBuf), "%d%%", s.coolingFanPct);
-    tft.drawString(fanBuf, 22, 204);
+    drawFanGauge(tft, col2, row2Y, gR,
+                 s.auxFanPct, CLR_ORANGE, "Aux", forceRedraw);
 
-    // Speed level badge
-    tft.setTextColor(speedLevelColor(s.speedLevel), CLR_BG);
-    tft.drawString(speedLevelName(s.speedLevel), 65, 204);
-
-    // WiFi signal
-    drawIcon16(tft, 130, 200, icon_wifi,
-               (s.wifiSignal > -60) ? CLR_GREEN :
-               (s.wifiSignal > -75) ? CLR_YELLOW : CLR_RED);
-    char rssi[12];
-    snprintf(rssi, sizeof(rssi), "%ddBm", s.wifiSignal);
-    tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
-    tft.drawString(rssi, 148, 204);
+    drawFanGauge(tft, col3, row2Y, gR,
+                 s.chamberFanPct, CLR_GREEN, "Chamber", forceRedraw);
   }
 
-  // === Info row (y=220-238) ===
+  // === Info line — layer count (below row 2 labels) ===
   if (infoChanged) {
-    tft.fillRect(0, 220, SCREEN_W, 20, CLR_BG);
-
-    tft.setTextFont(1);
-    tft.setTextDatum(TL_DATUM);
-
-    // Layer icon + count
-    drawIcon16(tft, 4, 222, icon_layers, CLR_TEXT_DIM);
+    tft.fillRect(0, 196, SCREEN_W, 18, CLR_BG);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextFont(2);
     tft.setTextColor(CLR_TEXT, CLR_BG);
-    char layerBuf[16];
-    snprintf(layerBuf, sizeof(layerBuf), "%d/%d", s.layerNum, s.totalLayers);
-    tft.drawString(layerBuf, 22, 226);
+    char layerBuf[24];
+    snprintf(layerBuf, sizeof(layerBuf), "Layer %d / %d", s.layerNum, s.totalLayers);
+    tft.drawString(layerBuf, SCREEN_W / 2, 205);
+  }
 
-    // File icon + name (truncated)
-    drawIcon16(tft, 90, 222, icon_file, CLR_TEXT_DIM);
+  // === Bottom status bar — WiFi signal + speed mode (y=218-236) ===
+  bool bottomChanged = forceRedraw ||
+                       (s.wifiSignal != prevState.wifiSignal) ||
+                       (s.speedLevel != prevState.speedLevel);
+  if (bottomChanged) {
+    tft.fillRect(0, 218, SCREEN_W, 22, CLR_BG);
+
+    // WiFi signal (left)
+    tft.setTextDatum(ML_DATUM);
+    tft.setTextFont(1);
     tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
-    char truncName[20];
-    strncpy(truncName, s.subtaskName, 19);
-    truncName[19] = '\0';
-    tft.drawString(truncName, 108, 226);
+    char wifiBuf[20];
+    snprintf(wifiBuf, sizeof(wifiBuf), "WiFi %ddBm", s.wifiSignal);
+    tft.drawString(wifiBuf, 4, 230);
+
+    // Speed mode (right)
+    tft.setTextDatum(MR_DATUM);
+    tft.setTextColor(speedLevelColor(s.speedLevel), CLR_BG);
+    tft.drawString(speedLevelName(s.speedLevel), SCREEN_W - 4, 230);
   }
 }
 

@@ -6,7 +6,7 @@
 // =============================================================================
 #define SCREEN_W        240
 #define SCREEN_H        240
-#define BACKLIGHT_PIN   TFT_BL
+#define BACKLIGHT_PIN   TFT_BL  // GPIO 13
 #define BACKLIGHT_CH    0
 #define BACKLIGHT_FREQ  5000
 #define BACKLIGHT_RES   8
