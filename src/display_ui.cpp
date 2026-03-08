@@ -4,9 +4,10 @@
 #include "icons.h"
 #include "config.h"
 #include "bambu_state.h"
+#include "bambu_mqtt.h"
 #include "settings.h"
-#include <SPI.h>
 #include <WiFi.h>
+#include <time.h>
 
 TFT_eSPI tft = TFT_eSPI();
 
@@ -34,12 +35,9 @@ void setBacklight(uint8_t level) {
 void initDisplay() {
   Serial.println("Display: pre-init delay...");
   delay(500);
-  Serial.println("Display: SPI.begin()...");
-  Serial.flush();
-  SPI.begin(TFT_SCLK, -1, TFT_MOSI, TFT_CS);
   Serial.println("Display: calling tft.init()...");
   Serial.flush();
-  tft.init();
+  tft.init();  // TFT_eSPI configures SPI from build flags
   Serial.println("Display: tft.init() done");
   tft.setRotation(dispSettings.rotation);
   Serial.println("Display: setRotation done");
@@ -62,7 +60,7 @@ void initDisplay() {
   tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
   tft.drawString("Printer Monitor", SCREEN_W / 2, SCREEN_H / 2 + 10);
   tft.setTextFont(1);
-  tft.drawString("v1.0", SCREEN_W / 2, SCREEN_H / 2 + 30);
+  tft.drawString("v1.1", SCREEN_W / 2, SCREEN_H / 2 + 30);
 }
 
 void applyDisplaySettings() {
@@ -165,11 +163,15 @@ static void drawWiFiConnected() {
 
   tft.setTextDatum(MC_DATUM);
 
-  // Checkmark circle
-  tft.fillCircle(SCREEN_W / 2, SCREEN_H / 2 - 40, 25, CLR_GREEN);
-  tft.setTextColor(CLR_BG, CLR_GREEN);
-  tft.setTextFont(4);
-  tft.drawChar('Y', SCREEN_W / 2 - 7, SCREEN_H / 2 - 53);  // crude check
+  // Checkmark circle with tick
+  int cx = SCREEN_W / 2;
+  int cy = SCREEN_H / 2 - 40;
+  tft.fillCircle(cx, cy, 25, CLR_GREEN);
+  // Draw thick tick mark (3px wide)
+  for (int i = -1; i <= 1; i++) {
+    tft.drawLine(cx - 12, cy + i,     cx - 4, cy + 8 + i, CLR_BG);  // short leg
+    tft.drawLine(cx - 4,  cy + 8 + i, cx + 12, cy - 6 + i, CLR_BG); // long leg
+  }
 
   tft.setTextColor(CLR_GREEN, CLR_BG);
   tft.setTextFont(4);
@@ -186,35 +188,100 @@ static void drawWiFiConnected() {
 static void drawConnectingMQTT() {
   tft.setTextDatum(MC_DATUM);
 
-  drawSpinner(tft, SCREEN_W / 2, SCREEN_H / 2 - 30, 35, CLR_ORANGE);
+  drawSpinner(tft, SCREEN_W / 2, SCREEN_H / 2 - 50, 30, CLR_ORANGE);
 
   tft.setTextFont(2);
   tft.setTextColor(CLR_TEXT, CLR_BG);
-  tft.drawString("Connecting to Printer", SCREEN_W / 2, SCREEN_H / 2 + 20);
+  tft.drawString("Connecting to Printer", SCREEN_W / 2, SCREEN_H / 2);
 
   int16_t tw = tft.textWidth("Connecting to Printer");
-  drawAnimDots(tft, SCREEN_W / 2 + tw / 2, SCREEN_H / 2 + 14, CLR_TEXT);
+  drawAnimDots(tft, SCREEN_W / 2 + tw / 2, SCREEN_H / 2 - 6, CLR_TEXT);
 
   // Show printer name/IP
   PrinterSlot& p = activePrinter();
   tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
   tft.setTextFont(1);
-  tft.drawString(p.config.ip, SCREEN_W / 2, SCREEN_H / 2 + 42);
+  tft.drawString(p.config.ip, SCREEN_W / 2, SCREEN_H / 2 + 20);
 
   // Elapsed time
   if (connectScreenStart > 0) {
     unsigned long elapsed = (millis() - connectScreenStart) / 1000;
     char elBuf[16];
     snprintf(elBuf, sizeof(elBuf), "%lus", elapsed);
-    tft.fillRect(SCREEN_W / 2 - 20, SCREEN_H / 2 + 52, 40, 12, CLR_BG);
-    tft.drawString(elBuf, SCREEN_W / 2, SCREEN_H / 2 + 58);
+    tft.fillRect(SCREEN_W / 2 - 20, SCREEN_H / 2 + 28, 40, 12, CLR_BG);
+    tft.drawString(elBuf, SCREEN_W / 2, SCREEN_H / 2 + 34);
+  }
+
+  // Diagnostics info
+  const MqttDiag& d = getMqttDiag();
+  if (d.attempts > 0) {
+    tft.fillRect(0, SCREEN_H / 2 + 48, SCREEN_W, 72, CLR_BG);
+    tft.setTextFont(1);
+    tft.setTextDatum(MC_DATUM);
+
+    // Attempt count
+    char buf[40];
+    snprintf(buf, sizeof(buf), "Attempt: %u", d.attempts);
+    tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
+    tft.drawString(buf, SCREEN_W / 2, SCREEN_H / 2 + 56);
+
+    // TCP status
+    if (d.tcpOk) {
+      tft.setTextColor(CLR_GREEN, CLR_BG);
+      tft.drawString("TCP: OK", SCREEN_W / 2, SCREEN_H / 2 + 68);
+    } else if (d.lastRc != 0) {
+      tft.setTextColor(CLR_RED, CLR_BG);
+      tft.drawString("TCP: fail", SCREEN_W / 2, SCREEN_H / 2 + 68);
+    }
+
+    // Last error
+    if (d.lastRc != 0) {
+      snprintf(buf, sizeof(buf), "Err: %s", mqttRcToString(d.lastRc));
+      tft.setTextColor(CLR_RED, CLR_BG);
+      tft.drawString(buf, SCREEN_W / 2, SCREEN_H / 2 + 80);
+    }
+
+    // Heap
+    snprintf(buf, sizeof(buf), "Heap: %uK", d.freeHeap / 1024);
+    tft.setTextColor(CLR_TEXT_DARK, CLR_BG);
+    tft.drawString(buf, SCREEN_W / 2, SCREEN_H / 2 + 92);
   }
 }
 
 // ---------------------------------------------------------------------------
 //  Screen: Idle (connected, not printing)
 // ---------------------------------------------------------------------------
+static void drawIdleNoPrinter() {
+  if (!forceRedraw) return;
+
+  tft.setTextDatum(MC_DATUM);
+
+  tft.setTextColor(CLR_GREEN, CLR_BG);
+  tft.setTextFont(4);
+  tft.drawString("BambuHelper", SCREEN_W / 2, 40);
+
+  tft.setTextColor(CLR_TEXT, CLR_BG);
+  tft.setTextFont(2);
+  tft.drawString("WiFi Connected", SCREEN_W / 2, 80);
+
+  tft.fillCircle(SCREEN_W / 2, 105, 5, CLR_GREEN);
+
+  tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
+  tft.setTextFont(2);
+  tft.drawString("No printer configured", SCREEN_W / 2, 140);
+  tft.drawString("Open in browser:", SCREEN_W / 2, 165);
+
+  tft.setTextColor(CLR_ORANGE, CLR_BG);
+  tft.setTextFont(4);
+  tft.drawString(WiFi.localIP().toString().c_str(), SCREEN_W / 2, 200);
+}
+
 static void drawIdle() {
+  if (!isPrinterConfigured()) {
+    drawIdleNoPrinter();
+    return;
+  }
+
   PrinterSlot& p = activePrinter();
   BambuState& s = p.state;
 
@@ -277,10 +344,8 @@ static void drawPrinting() {
                      (s.nozzleTarget != prevState.nozzleTarget) ||
                      (s.bedTemp != prevState.bedTemp) ||
                      (s.bedTarget != prevState.bedTarget);
-  bool infoChanged = forceRedraw ||
-                     (s.layerNum != prevState.layerNum) ||
-                     (s.totalLayers != prevState.totalLayers) ||
-                     (strcmp(s.subtaskName, prevState.subtaskName) != 0);
+  bool etaChanged = forceRedraw ||
+                     (s.remainingMinutes != prevState.remainingMinutes);
   bool fansChanged = forceRedraw ||
                      (s.coolingFanPct != prevState.coolingFanPct) ||
                      (s.auxFanPct != prevState.auxFanPct) ||
@@ -304,12 +369,13 @@ static void drawPrinting() {
 
   // === Header bar (y=7-25) ===
   if (forceRedraw || stateChanged) {
-    tft.fillRect(0, 7, SCREEN_W, 20, CLR_HEADER);
+    uint16_t hdrBg = dispSettings.bgColor;
+    tft.fillRect(0, 7, SCREEN_W, 20, hdrBg);
 
     // Printer name (left)
     tft.setTextDatum(ML_DATUM);
     tft.setTextFont(2);
-    tft.setTextColor(CLR_TEXT, CLR_HEADER);
+    tft.setTextColor(CLR_TEXT, hdrBg);
     const char* name = (p.config.name[0] != '\0') ? p.config.name : "Bambu P1S";
     tft.drawString(name, 6, 17);
 
@@ -321,7 +387,7 @@ static void drawPrinting() {
     else if (strcmp(s.gcodeState, "PREPARE") == 0) badgeColor = CLR_BLUE;
 
     tft.setTextDatum(MR_DATUM);
-    tft.setTextColor(badgeColor, CLR_HEADER);
+    tft.setTextColor(badgeColor, hdrBg);
     tft.setTextFont(2);
     tft.fillCircle(SCREEN_W - 8 - tft.textWidth(s.gcodeState) - 10, 17, 4, badgeColor);
     tft.drawString(s.gcodeState, SCREEN_W - 8, 17);
@@ -363,31 +429,73 @@ static void drawPrinting() {
                  &dispSettings.chamberFan);
   }
 
-  // === Info line — layer count (below row 2 labels) ===
-  if (infoChanged) {
-    tft.fillRect(0, 196, SCREEN_W, 18, CLR_BG);
+  // === Info line — ETA finish time (below row 2 labels) ===
+  if (etaChanged) {
+    tft.fillRect(0, 190, SCREEN_W, 30, CLR_BG);
     tft.setTextDatum(MC_DATUM);
-    tft.setTextFont(2);
-    tft.setTextColor(CLR_TEXT, CLR_BG);
-    char layerBuf[24];
-    snprintf(layerBuf, sizeof(layerBuf), "Layer %d / %d", s.layerNum, s.totalLayers);
-    tft.drawString(layerBuf, SCREEN_W / 2, 205);
+
+    if (s.remainingMinutes > 0) {
+      struct tm now;
+      if (getLocalTime(&now, 0)) {
+        // Calculate ETA: current time + remaining minutes
+        time_t nowEpoch = mktime(&now);
+        time_t etaEpoch = nowEpoch + (time_t)s.remainingMinutes * 60;
+        struct tm etaTm;
+        localtime_r(&etaEpoch, &etaTm);
+
+        char etaBuf[32];
+        // Show date only if finish is not today
+        if (etaTm.tm_yday != now.tm_yday || etaTm.tm_year != now.tm_year) {
+          snprintf(etaBuf, sizeof(etaBuf), "ETA: %d.%02d %02d:%02d",
+                   etaTm.tm_mday, etaTm.tm_mon + 1,
+                   etaTm.tm_hour, etaTm.tm_min);
+        } else {
+          snprintf(etaBuf, sizeof(etaBuf), "ETA: %02d:%02d",
+                   etaTm.tm_hour, etaTm.tm_min);
+        }
+        tft.setTextFont(4);
+        tft.setTextColor(CLR_GREEN, CLR_BG);
+        tft.drawString(etaBuf, SCREEN_W / 2, 207);
+      } else {
+        // NTP not synced yet — show remaining time only
+        char remBuf[24];
+        uint16_t h = s.remainingMinutes / 60;
+        uint16_t m = s.remainingMinutes % 60;
+        snprintf(remBuf, sizeof(remBuf), "Remaining: %dh %02dm", h, m);
+        tft.setTextFont(4);
+        tft.setTextColor(CLR_TEXT, CLR_BG);
+        tft.drawString(remBuf, SCREEN_W / 2, 207);
+      }
+    } else {
+      tft.setTextFont(4);
+      tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
+      tft.drawString("ETA: ---", SCREEN_W / 2, 207);
+    }
   }
 
-  // === Bottom status bar — WiFi signal + speed mode (y=218-236) ===
+  // === Bottom status bar — WiFi | Layer | Speed (y=218-236) ===
   bool bottomChanged = forceRedraw ||
                        (s.wifiSignal != prevState.wifiSignal) ||
-                       (s.speedLevel != prevState.speedLevel);
+                       (s.speedLevel != prevState.speedLevel) ||
+                       (s.layerNum != prevState.layerNum) ||
+                       (s.totalLayers != prevState.totalLayers);
   if (bottomChanged) {
     tft.fillRect(0, 218, SCREEN_W, 22, CLR_BG);
+    tft.setTextFont(1);
 
     // WiFi signal (left)
     tft.setTextDatum(ML_DATUM);
-    tft.setTextFont(1);
     tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
     char wifiBuf[20];
     snprintf(wifiBuf, sizeof(wifiBuf), "WiFi %ddBm", s.wifiSignal);
     tft.drawString(wifiBuf, 4, 230);
+
+    // Layer count (center)
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
+    char layerBuf[20];
+    snprintf(layerBuf, sizeof(layerBuf), "L%d/%d", s.layerNum, s.totalLayers);
+    tft.drawString(layerBuf, SCREEN_W / 2, 230);
 
     // Speed mode (right)
     tft.setTextDatum(MR_DATUM);

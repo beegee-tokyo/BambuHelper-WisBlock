@@ -140,6 +140,7 @@ void loadSettings() {
   strlcpy(netSettings.subnet, prefs.getString("net_sn", "255.255.255.0").c_str(), sizeof(netSettings.subnet));
   strlcpy(netSettings.dns, prefs.getString("net_dns", "").c_str(), sizeof(netSettings.dns));
   netSettings.showIPAtStartup = prefs.getBool("net_showip", true);
+  netSettings.gmtOffsetMin = prefs.getShort("net_tz", 60);  // default UTC+1 (CET)
 
   // Display power settings
   dpSettings.finishDisplayMins = prefs.getUShort("dp_fmins", 3);
@@ -182,6 +183,7 @@ void saveSettings() {
   prefs.putString("net_sn", netSettings.subnet);
   prefs.putString("net_dns", netSettings.dns);
   prefs.putBool("net_showip", netSettings.showIPAtStartup);
+  prefs.putShort("net_tz", netSettings.gmtOffsetMin);
 
   // Display power settings
   prefs.putUShort("dp_fmins", dpSettings.finishDisplayMins);

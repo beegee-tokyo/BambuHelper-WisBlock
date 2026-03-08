@@ -86,6 +86,13 @@ void initWiFi() {
       apMode = false;
       disconnectTime = 0;
 
+      // Sync time via NTP
+      configTime(netSettings.gmtOffsetMin * 60L, 0,
+                 "pool.ntp.org", "time.nist.gov");
+      Serial.printf("NTP configured (UTC%+d:%02d)\n",
+                    netSettings.gmtOffsetMin / 60,
+                    abs(netSettings.gmtOffsetMin) % 60);
+
       // Show IP screen for 3 seconds if enabled
       if (netSettings.showIPAtStartup) {
         setScreenState(SCREEN_WIFI_CONNECTED);

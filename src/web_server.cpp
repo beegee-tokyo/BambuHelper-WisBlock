@@ -1,6 +1,7 @@
 #include "web_server.h"
 #include "settings.h"
 #include "bambu_state.h"
+#include "bambu_mqtt.h"
 #include "wifi_manager.h"
 #include "display_ui.h"
 #include "config.h"
@@ -124,6 +125,40 @@ static const char PAGE_HTML[] PROGMEM = R"rawliteral(
     <input type="checkbox" name="showip" id="showip" value="1" %SHOWIP%>
     <label for="showip">Show IP at startup (3s)</label>
   </div>
+  <label for="tz">Timezone</label>
+  <select name="tz" id="tz">
+    <option value="-720" %TZ_N720%>UTC-12:00</option>
+    <option value="-660" %TZ_N660%>UTC-11:00</option>
+    <option value="-600" %TZ_N600%>UTC-10:00 (Hawaii)</option>
+    <option value="-540" %TZ_N540%>UTC-9:00 (Alaska)</option>
+    <option value="-480" %TZ_N480%>UTC-8:00 (Pacific)</option>
+    <option value="-420" %TZ_N420%>UTC-7:00 (Mountain)</option>
+    <option value="-360" %TZ_N360%>UTC-6:00 (Central)</option>
+    <option value="-300" %TZ_N300%>UTC-5:00 (Eastern)</option>
+    <option value="-240" %TZ_N240%>UTC-4:00 (Atlantic)</option>
+    <option value="-210" %TZ_N210%>UTC-3:30 (Newfoundland)</option>
+    <option value="-180" %TZ_N180%>UTC-3:00 (Brazil)</option>
+    <option value="-120" %TZ_N120%>UTC-2:00</option>
+    <option value="-60" %TZ_N60%>UTC-1:00 (Azores)</option>
+    <option value="0" %TZ_0%>UTC+0:00 (London)</option>
+    <option value="60" %TZ_60%>UTC+1:00 (Berlin/Paris)</option>
+    <option value="120" %TZ_120%>UTC+2:00 (Helsinki/Cairo)</option>
+    <option value="180" %TZ_180%>UTC+3:00 (Moscow)</option>
+    <option value="210" %TZ_210%>UTC+3:30 (Tehran)</option>
+    <option value="240" %TZ_240%>UTC+4:00 (Dubai)</option>
+    <option value="270" %TZ_270%>UTC+4:30 (Kabul)</option>
+    <option value="300" %TZ_300%>UTC+5:00 (Karachi)</option>
+    <option value="330" %TZ_330%>UTC+5:30 (India)</option>
+    <option value="345" %TZ_345%>UTC+5:45 (Nepal)</option>
+    <option value="360" %TZ_360%>UTC+6:00 (Dhaka)</option>
+    <option value="420" %TZ_420%>UTC+7:00 (Bangkok)</option>
+    <option value="480" %TZ_480%>UTC+8:00 (Singapore)</option>
+    <option value="540" %TZ_540%>UTC+9:00 (Tokyo)</option>
+    <option value="570" %TZ_570%>UTC+9:30 (Adelaide)</option>
+    <option value="600" %TZ_600%>UTC+10:00 (Sydney)</option>
+    <option value="660" %TZ_660%>UTC+11:00</option>
+    <option value="720" %TZ_720%>UTC+12:00 (Auckland)</option>
+  </select>
 </div>
 
 <div class="card">
@@ -248,6 +283,15 @@ static const char PAGE_HTML[] PROGMEM = R"rawliteral(
 
 <button type="button" class="btn btn-blue" onclick="applyDisplay()">Apply Display Settings</button>
 
+<div class="card">
+  <h2>Diagnostics</h2>
+  <div class="check-row">
+    <input type="checkbox" id="dbglog" onchange="toggleDebug(this.checked)" %DBGLOG%>
+    <label for="dbglog">Verbose Serial logging (USB)</label>
+  </div>
+  <div id="diagInfo" style="margin-top:10px;font-size:12px;color:#8B949E"></div>
+</div>
+
 <button class="btn btn-danger" style="margin-top:10px"
         onclick="if(confirm('Reset all settings?'))location='/reset'">Factory Reset</button>
 
@@ -308,6 +352,27 @@ function applyTheme(name){
     document.getElementById(g[i]+'_v').value=c.v;
   }
 }
+
+function toggleDebug(on){
+  fetch('/debug/toggle',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'on='+(on?'1':'0')}).then(r=>{
+    if(r.ok) showToast(on?'Debug ON':'Debug OFF');
+  });
+}
+function refreshDiag(){
+  fetch('/debug').then(r=>r.json()).then(d=>{
+    var h='';
+    h+='<div class="stat-row"><span>MQTT:</span><span class="stat-val">'+(d.connected?'<span style="color:#3FB950">Connected</span>':'<span style="color:#F85149">Disconnected</span>')+'</span></div>';
+    h+='<div class="stat-row"><span>Attempts:</span><span class="stat-val">'+d.attempts+'</span></div>';
+    h+='<div class="stat-row"><span>Messages RX:</span><span class="stat-val">'+d.messages+'</span></div>';
+    h+='<div class="stat-row"><span>Last TCP:</span><span class="stat-val">'+(d.tcp_ok?'<span style="color:#3FB950">OK</span>':'<span style="color:#F85149">Failed</span>')+'</span></div>';
+    if(d.last_rc!==0) h+='<div class="stat-row"><span>Last error:</span><span class="stat-val" style="color:#F85149">'+d.rc_text+' (rc='+d.last_rc+')</span></div>';
+    h+='<div class="stat-row"><span>Free heap:</span><span class="stat-val">'+Math.round(d.heap/1024)+'KB</span></div>';
+    h+='<div class="stat-row"><span>Uptime:</span><span class="stat-val">'+Math.round(d.uptime/60)+'min</span></div>';
+    document.getElementById('diagInfo').innerHTML=h;
+  }).catch(function(){});
+}
+refreshDiag();
+setInterval(refreshDiag,5000);
 
 function showToast(msg){
   var t=document.getElementById('toast');
@@ -406,6 +471,20 @@ static String processTemplate(const String& html) {
   page.replace("%NET_DNS%", netSettings.dns);
   page.replace("%SHOWIP%", netSettings.showIPAtStartup ? "checked" : "");
 
+  // Timezone dropdown — mark the selected option
+  {
+    const int16_t tzVals[] = {-720,-660,-600,-540,-480,-420,-360,-300,-240,-210,-180,-120,-60,
+                              0,60,120,180,210,240,270,300,330,345,360,420,480,540,570,600,660,720};
+    for (int i = 0; i < (int)(sizeof(tzVals)/sizeof(tzVals[0])); i++) {
+      char ph[16];
+      if (tzVals[i] < 0)
+        snprintf(ph, sizeof(ph), "%%TZ_N%d%%", -tzVals[i]);
+      else
+        snprintf(ph, sizeof(ph), "%%TZ_%d%%", tzVals[i]);
+      page.replace(ph, netSettings.gmtOffsetMin == tzVals[i] ? "selected" : "");
+    }
+  }
+
   // Rotation dropdown
   page.replace("%ROT0%", dispSettings.rotation == 0 ? "selected" : "");
   page.replace("%ROT1%", dispSettings.rotation == 1 ? "selected" : "");
@@ -430,6 +509,8 @@ static String processTemplate(const String& html) {
   replaceGaugeColors(page, "PFN", dispSettings.partFan);
   replaceGaugeColors(page, "AFN", dispSettings.auxFan);
   replaceGaugeColors(page, "CFN", dispSettings.chamberFan);
+
+  page.replace("%DBGLOG%", mqttDebugLog ? "checked" : "");
 
   if (cfg.enabled && st.connected) {
     page.replace("%STATUS_CLASS%", "status status-ok");
@@ -513,6 +594,7 @@ static void handleSave() {
   if (server.hasArg("net_sn"))  strlcpy(netSettings.subnet, server.arg("net_sn").c_str(), sizeof(netSettings.subnet));
   if (server.hasArg("net_dns")) strlcpy(netSettings.dns, server.arg("net_dns").c_str(), sizeof(netSettings.dns));
   netSettings.showIPAtStartup = server.hasArg("showip");
+  if (server.hasArg("tz")) netSettings.gmtOffsetMin = server.arg("tz").toInt();
 
   if (server.hasArg("pname")) strlcpy(cfg.name, server.arg("pname").c_str(), sizeof(cfg.name));
   if (server.hasArg("ip"))    strlcpy(cfg.ip, server.arg("ip").c_str(), sizeof(cfg.ip));
@@ -570,6 +652,34 @@ static void handleReset() {
   resetSettings();
 }
 
+static void handleDebug() {
+  const MqttDiag& d = getMqttDiag();
+  BambuState& st = printers[0].state;
+
+  JsonDocument doc;
+  doc["connected"] = st.connected;
+  doc["attempts"] = d.attempts;
+  doc["messages"] = d.messagesRx;
+  doc["last_rc"] = d.lastRc;
+  doc["rc_text"] = mqttRcToString(d.lastRc);
+  doc["tcp_ok"] = d.tcpOk;
+  doc["heap"] = d.freeHeap;
+  doc["connect_ms"] = d.connectDurMs;
+  doc["uptime"] = millis() / 1000;
+  doc["debug_log"] = mqttDebugLog;
+
+  String json;
+  serializeJson(doc, json);
+  server.send(200, "application/json", json);
+}
+
+static void handleDebugToggle() {
+  if (server.hasArg("on")) {
+    mqttDebugLog = (server.arg("on") == "1");
+  }
+  server.send(200, "text/plain", mqttDebugLog ? "ON" : "OFF");
+}
+
 // Captive portal: redirect any unknown request to root
 static void handleNotFound() {
   if (isAPMode()) {
@@ -589,6 +699,8 @@ void initWebServer() {
   server.on("/apply", HTTP_POST, handleApply);
   server.on("/status", HTTP_GET, handleStatus);
   server.on("/reset", HTTP_GET, handleReset);
+  server.on("/debug", HTTP_GET, handleDebug);
+  server.on("/debug/toggle", HTTP_POST, handleDebugToggle);
   server.onNotFound(handleNotFound);
   server.begin();
   Serial.println("Web server started on port 80");

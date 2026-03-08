@@ -38,13 +38,21 @@ void loop() {
   handleWebServer();
 
   if (isWiFiConnected() && !isAPMode()) {
-    handleBambuMqtt();
+    if (isPrinterConfigured()) {
+      handleBambuMqtt();
+    }
 
     // Auto-select screen based on printer state
     BambuState& s = activePrinter().state;
     ScreenState current = getScreenState();
 
-    if (!s.connected && current != SCREEN_CONNECTING_MQTT && current != SCREEN_OFF) {
+    if (!isPrinterConfigured()) {
+      // No printer configured — show idle (user can configure via web)
+      if (current != SCREEN_IDLE && current != SCREEN_OFF) {
+        setScreenState(SCREEN_IDLE);
+        finishScreenStart = 0;
+      }
+    } else if (!s.connected && current != SCREEN_CONNECTING_MQTT && current != SCREEN_OFF) {
       setScreenState(SCREEN_CONNECTING_MQTT);
       finishScreenStart = 0;
     } else if (!s.connected && current == SCREEN_OFF) {
