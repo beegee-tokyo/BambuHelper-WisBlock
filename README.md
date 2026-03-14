@@ -101,13 +101,6 @@ Adjust pin assignments in `platformio.ini` build_flags to match your wiring.
 
 To use cloud mode, you need an access token from your Bambu Lab account. There are two ways to get it:
 
-**Using the Python helper script (recommended):**
-```bash
-pip install curl_cffi
-python tools/get_token.py
-```
-The script will prompt for your email, password, and 2FA code, then print the token. Copy and paste it into BambuHelper's web interface.
-
 **Using browser DevTools (Chrome / Edge):**
 1. Open https://bambulab.com and log in to your account
 2. Press **F12** to open DevTools
@@ -132,6 +125,13 @@ The script will prompt for your email, password, and 2FA code, then print the to
 3. Go to the **Storage** tab → **Cookies** → `bambulab.com`
 4. Find and copy the `token` value
 5. Paste it into BambuHelper's "Access Token" field
+
+**Using the Python helper script (recommended):**
+```bash
+pip install curl_cffi
+python tools/get_token.py
+```
+The script will prompt for your email, password, and 2FA code, then print the token. Copy and paste it into BambuHelper's web interface.
 
 > **Note:** The token is valid for approximately 3 months. When it expires, the ESP32 will fail to connect — simply repeat the process above to get a fresh token and paste it in the web interface. Make sure to select the correct **Server Region** (US/EU/CN) to match your Bambu account's region.
 
