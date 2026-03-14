@@ -177,7 +177,6 @@ static const char PAGE_HTML[] PROGMEM = R"rawliteral(
       <label for="connmode">Connection Mode</label>
       <select id="connmode" onchange="toggleConnMode()">
         <option value="local" %MODE_LOCAL%>LAN Direct (P1/X1/A1)</option>
-        <option value="cloud" %MODE_CLOUD%>Bambu Cloud (H2/P2S)</option>
         <option value="cloud_all" %MODE_CLOUD_ALL%>Bambu Cloud (All printers)</option>
       </select>
 
@@ -193,54 +192,34 @@ static const char PAGE_HTML[] PROGMEM = R"rawliteral(
       </div>
 
       <div id="cloudFields" style="display:none">
-        <p id="cloudDesc" style="font-size:12px;color:#8B949E;margin:10px 0">Connects via Bambu Cloud.<br>Token valid ~3 months. Your password is NOT stored.</p>
+        <p style="font-size:12px;color:#8B949E;margin:10px 0">Connect any printer via Bambu Cloud (no LAN mode needed).<br>Token valid ~3 months. Your password is NOT stored.</p>
         <label for="region">Server Region</label>
         <select id="region">
           <option value="us" %REGION_US%>Americas (US)</option>
           <option value="eu" %REGION_EU%>Europe (EU)</option>
           <option value="cn" %REGION_CN%>China (CN)</option>
         </select>
-        <div id="cloudLoginSection">
-          <label for="cl_email">Bambu Account Email</label>
-          <input type="text" id="cl_email" value="%CL_EMAIL%" placeholder="user@example.com">
-          <label for="cl_pass">Password</label>
-          <input type="password" id="cl_pass" placeholder="Account password">
-          <button type="button" class="btn btn-blue" style="margin-top:10px" onclick="cloudLogin()">Login to Bambu Cloud</button>
-        </div>
-        <div id="cloud2FA" style="display:none;margin-top:10px">
-          <label for="cl_code">Verification Code (email or authenticator app)</label>
-          <input type="text" id="cl_code" placeholder="123456" maxlength="6">
-          <button type="button" class="btn btn-blue" style="margin-top:8px" onclick="cloudVerify()">Verify Code</button>
-        </div>
         <div id="cloudStatus" style="margin-top:8px;font-size:13px;color:#8B949E">%CLOUD_STATUS%</div>
-        <div id="cloudDevices" style="display:none;margin-top:10px">
-          <label for="cl_device">Select Printer</label>
-          <select id="cl_device" onchange="selectCloudDevice()"></select>
-        </div>
-        <input type="hidden" id="cl_serial" value="%SERIAL%">
-        <input type="hidden" id="cl_pname" value="%PNAME%">
-        <button type="button" class="btn btn-danger" style="margin-top:10px;display:none;font-size:12px;padding:6px"
-                id="cloudLogoutBtn" onclick="cloudLogout()">Logout from Cloud</button>
-        <div id="pasteTokenSection" style="margin-top:16px;padding-top:12px;border-top:1px solid #30363D">
+        <div style="margin-top:10px">
           <p style="font-size:12px;color:#8B949E;margin-bottom:8px">
-            <b>Having trouble logging in?</b> (Cloudflare may block ESP32)<br>
-            Get your token with the Python script or browser DevTools, then paste it here.
-            <a href="https://github.com/rafalz/BambuHelper#getting-a-cloud-token" style="color:#58A6FF" target="_blank">Instructions</a>
+            <b>How to get your token:</b><br>
+            1. Open <a href="https://bambulab.com" style="color:#58A6FF" target="_blank">bambulab.com</a> and log in<br>
+            2. Press <b>F12</b> to open DevTools<br>
+            3. Go to <b>Application</b> (Chrome/Edge) or <b>Storage</b> (Firefox) tab<br>
+            4. Expand <b>Cookies</b> &rarr; click <b>bambulab.com</b><br>
+            5. Find and copy the <b>token</b> cookie value<br>
+            <a href="https://github.com/Keralots/BambuHelper#getting-a-cloud-token" style="color:#58A6FF" target="_blank">Detailed instructions</a>
           </p>
           <label for="cl_token">Access Token</label>
           <textarea id="cl_token" rows="3" style="width:100%;padding:8px;border:1px solid #30363D;border-radius:6px;background:#0D1117;color:#E6EDF3;font-size:11px;font-family:monospace;resize:vertical" placeholder="Paste your Bambu Cloud token here..."></textarea>
-          <button type="button" class="btn btn-blue" style="margin-top:8px" onclick="pasteToken()">Save Token &amp; Fetch Printers</button>
-          <div id="pasteStatus" style="margin-top:6px;font-size:13px;color:#8B949E"></div>
         </div>
-        <div id="manualSerial" style="margin-top:10px">
-          <label for="cl_manual_serial">Printer Serial Number</label>
-          <input type="text" id="cl_manual_serial" value="%SERIAL%" placeholder="01P00A000000000" maxlength="19"
-                 oninput="document.getElementById('cl_serial').value=this.value">
-          <label for="cl_manual_name">Printer Name</label>
-          <input type="text" id="cl_manual_name" value="%PNAME%" placeholder="My Printer" maxlength="23"
-                 oninput="document.getElementById('cl_pname').value=this.value">
-          <p style="font-size:11px;color:#8B949E;margin-top:6px">Find your serial in Bambu Handy or on the printer's label.</p>
-        </div>
+        <label for="cl_serial">Printer Serial Number</label>
+        <input type="text" id="cl_serial" value="%SERIAL%" placeholder="01P00A000000000" maxlength="19">
+        <label for="cl_pname">Printer Name</label>
+        <input type="text" id="cl_pname" value="%PNAME%" placeholder="My Printer" maxlength="23">
+        <p style="font-size:11px;color:#8B949E;margin-top:6px">Find your serial in Bambu Handy or on the printer's label.</p>
+        <button type="button" class="btn btn-danger" style="margin-top:10px;font-size:12px;padding:6px"
+                id="cloudLogoutBtn" onclick="cloudLogout()">Clear Token</button>
       </div>
 
       <div id="liveStats"></div>
@@ -468,11 +447,9 @@ toggleStatic();
 
 function toggleConnMode(){
   var v=document.getElementById('connmode').value;
-  var cloud=(v==='cloud'||v==='cloud_all');
+  var cloud=(v==='cloud_all');
   document.getElementById('localFields').style.display=cloud?'none':'block';
   document.getElementById('cloudFields').style.display=cloud?'block':'none';
-  if(v==='cloud') document.getElementById('cloudDesc').innerHTML='For H2C/H2D/H2S/P2S printers. Connects via Bambu Cloud.<br>Token valid ~3 months. Your password is NOT stored.';
-  else if(v==='cloud_all') document.getElementById('cloudDesc').innerHTML='Connect any printer via Bambu Cloud (no LAN mode needed).<br>Token valid ~3 months. Your password is NOT stored.';
 }
 toggleConnMode();
 
@@ -482,10 +459,12 @@ function savePrinter(){
   var mode=document.getElementById('connmode').value;
   p.append('connmode',mode);
   if(document.getElementById('enabled').checked) p.append('enabled','1');
-  if(mode==='cloud'||mode==='cloud_all'){
+  if(mode==='cloud_all'){
     p.append('serial',document.getElementById('cl_serial').value);
     p.append('pname',document.getElementById('cl_pname').value);
     p.append('region',document.getElementById('region').value);
+    var token=document.getElementById('cl_token').value.trim();
+    if(token) p.append('token',token);
   } else {
     p.append('pname',document.getElementById('pname').value);
     p.append('ip',document.getElementById('ip').value);
@@ -520,127 +499,12 @@ function saveWifi(){
     .catch(function(){showToast('Error');});
 }
 
-// --- Cloud login flow ---
-function cloudLogin(){
-  var email=document.getElementById('cl_email').value;
-  var pass=document.getElementById('cl_pass').value;
-  if(!email||!pass){document.getElementById('cloudStatus').innerHTML='<span style="color:#F85149">Enter email and password</span>';return;}
-  document.getElementById('cloudStatus').innerHTML='<span style="color:#58A6FF">Logging in...</span>';
-  var p=new URLSearchParams();
-  p.append('email',email);p.append('password',pass);
-  fetch('/cloud/login',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:p.toString()})
-    .then(function(r){return r.json();})
-    .then(function(d){
-      if(d.status==='ok'){
-        document.getElementById('cloudStatus').innerHTML='<span style="color:#3FB950">Logged in!</span>';
-        document.getElementById('cloudLoginSection').style.display='none';
-        document.getElementById('cloudLogoutBtn').style.display='block';
-        cloudFetchDevices();
-      } else if(d.status==='verify'){
-        document.getElementById('cloudStatus').innerHTML='<span style="color:#58A6FF">Enter verification code (email or authenticator app)</span>';
-        document.getElementById('cloud2FA').style.display='block';
-      } else {
-        document.getElementById('cloudStatus').innerHTML='<span style="color:#F85149">'+(d.message||'Login failed')+'</span>';
-      }
-    })
-    .catch(function(){document.getElementById('cloudStatus').innerHTML='<span style="color:#F85149">Network error</span>';});
-}
-
-function cloudVerify(){
-  var email=document.getElementById('cl_email').value;
-  var code=document.getElementById('cl_code').value;
-  if(!code){return;}
-  document.getElementById('cloudStatus').innerHTML='<span style="color:#58A6FF">Verifying...</span>';
-  var p=new URLSearchParams();
-  p.append('email',email);p.append('code',code);
-  fetch('/cloud/verify',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:p.toString()})
-    .then(function(r){return r.json();})
-    .then(function(d){
-      if(d.status==='ok'){
-        document.getElementById('cloudStatus').innerHTML='<span style="color:#3FB950">Verified!</span>';
-        document.getElementById('cloud2FA').style.display='none';
-        document.getElementById('cloudLoginSection').style.display='none';
-        document.getElementById('cloudLogoutBtn').style.display='block';
-        if(d.printers&&d.printers.length>0){
-          populateDeviceList(d.printers);
-        }
-      } else {
-        document.getElementById('cloudStatus').innerHTML='<span style="color:#F85149">'+(d.message||'Verification failed')+'</span>';
-      }
-    })
-    .catch(function(){document.getElementById('cloudStatus').innerHTML='<span style="color:#F85149">Network error</span>';});
-}
-
-function populateDeviceList(printers){
-  var sel=document.getElementById('cl_device');
-  sel.innerHTML='';
-  for(var i=0;i<printers.length;i++){
-    var o=document.createElement('option');
-    o.value=printers[i].serial;
-    o.setAttribute('data-name',printers[i].name);
-    o.textContent=printers[i].name+' ('+printers[i].model+')';
-    sel.appendChild(o);
-  }
-  document.getElementById('cloudDevices').style.display='block';
-  selectCloudDevice();
-}
-
-function selectCloudDevice(){
-  var sel=document.getElementById('cl_device');
-  if(sel.selectedIndex<0)return;
-  var opt=sel.options[sel.selectedIndex];
-  var serial=sel.value;
-  var name=opt.getAttribute('data-name')||opt.textContent;
-  document.getElementById('cl_serial').value=serial;
-  document.getElementById('cl_pname').value=name;
-  document.getElementById('cl_manual_serial').value=serial;
-  document.getElementById('cl_manual_name').value=name;
-  // Auto-save selection
-  savePrinter();
-}
-
-function cloudFetchDevices(){
-  fetch('/cloud/devices').then(function(r){return r.json();}).then(function(d){
-    if(d.printers&&d.printers.length>0) populateDeviceList(d.printers);
-  }).catch(function(){});
-}
-
+// --- Cloud ---
 function cloudLogout(){
   fetch('/cloud/logout',{method:'POST'}).then(function(){
-    document.getElementById('cloudStatus').innerHTML='<span style="color:#8B949E">Not logged in</span>';
-    document.getElementById('cloudDevices').style.display='none';
-    document.getElementById('cloudLogoutBtn').style.display='none';
-    document.getElementById('cloudLoginSection').style.display='block';
+    document.getElementById('cloudStatus').innerHTML='<span style="color:#8B949E">No token set</span>';
+    document.getElementById('cl_token').value='';
   });
-}
-
-function pasteToken(){
-  var token=document.getElementById('cl_token').value.trim();
-  if(!token){document.getElementById('pasteStatus').innerHTML='<span style="color:#F85149">Paste a token first</span>';return;}
-  document.getElementById('pasteStatus').innerHTML='<span style="color:#58A6FF">Saving token...</span>';
-  var p=new URLSearchParams();
-  p.append('token',token);
-  // Also send serial+name so they get saved with the token
-  p.append('serial',document.getElementById('cl_manual_serial').value);
-  p.append('pname',document.getElementById('cl_manual_name').value);
-  fetch('/cloud/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:p.toString()})
-    .then(function(r){return r.json();})
-    .then(function(d){
-      if(d.status==='ok'){
-        document.getElementById('pasteStatus').innerHTML='<span style="color:#3FB950">Token saved!</span>';
-        document.getElementById('cloudStatus').innerHTML='<span style="color:#3FB950">Logged in (token)</span>';
-        document.getElementById('cloudLoginSection').style.display='none';
-        document.getElementById('cloudLogoutBtn').style.display='block';
-        if(d.printers&&d.printers.length>0){
-          populateDeviceList(d.printers);
-        } else {
-          document.getElementById('pasteStatus').innerHTML+='<br><span style="color:#8B949E">Could not fetch printers (Cloudflare may block). Enter serial manually above.</span>';
-        }
-      } else {
-        document.getElementById('pasteStatus').innerHTML='<span style="color:#F85149">'+(d.message||'Invalid token')+'</span>';
-      }
-    })
-    .catch(function(){document.getElementById('pasteStatus').innerHTML='<span style="color:#F85149">Network error</span>';});
 }
 
 // --- Display ---
@@ -781,26 +645,21 @@ static String processTemplate(const String& html) {
   page.replace("%PASS%", wifiPass);
   page.replace("%ENABLED%", cfg.enabled ? "checked" : "");
   page.replace("%MODE_LOCAL%", cfg.mode == CONN_LOCAL ? "selected" : "");
-  page.replace("%MODE_CLOUD%", cfg.mode == CONN_CLOUD ? "selected" : "");
-  page.replace("%MODE_CLOUD_ALL%", cfg.mode == CONN_CLOUD_ALL ? "selected" : "");
+  page.replace("%MODE_CLOUD_ALL%", isCloudMode(cfg.mode) ? "selected" : "");
   page.replace("%PNAME%", cfg.name);
   page.replace("%IP%", cfg.ip);
   page.replace("%SERIAL%", cfg.serial);
   page.replace("%CODE%", cfg.accessCode);
-  page.replace("%CL_EMAIL%", cloudEmail);
-
   // Cloud region dropdown
   page.replace("%REGION_US%", cfg.region == REGION_US ? "selected" : "");
   page.replace("%REGION_EU%", cfg.region == REGION_EU ? "selected" : "");
   page.replace("%REGION_CN%", cfg.region == REGION_CN ? "selected" : "");
 
   // Cloud status text
-  if (isCloudMode(cfg.mode) && strlen(cloudEmail) > 0) {
-    char clStatus[96];
-    snprintf(clStatus, sizeof(clStatus), "Logged in as %s", cloudEmail);
-    page.replace("%CLOUD_STATUS%", clStatus);
-  } else {
-    page.replace("%CLOUD_STATUS%", "Not logged in");
+  {
+    char tokenBuf[32];
+    bool hasToken = loadCloudToken(tokenBuf, sizeof(tokenBuf));
+    page.replace("%CLOUD_STATUS%", hasToken ? "Token active" : "No token set");
   }
   page.replace("%BRIGHT%", String(brightness));
 
@@ -928,8 +787,7 @@ static void handleSavePrinter() {
 
   if (server.hasArg("connmode")) {
     String cm = server.arg("connmode");
-    if (cm == "cloud") cfg.mode = CONN_CLOUD;
-    else if (cm == "cloud_all") cfg.mode = CONN_CLOUD_ALL;
+    if (cm == "cloud_all") cfg.mode = CONN_CLOUD_ALL;
     else cfg.mode = CONN_LOCAL;
   }
 
@@ -944,6 +802,10 @@ static void handleSavePrinter() {
   if (isCloudMode(cfg.mode)) {
     if (server.hasArg("serial")) strlcpy(cfg.serial, server.arg("serial").c_str(), sizeof(cfg.serial));
     if (server.hasArg("pname"))  strlcpy(cfg.name, server.arg("pname").c_str(), sizeof(cfg.name));
+    // Save token if provided
+    if (server.hasArg("token") && server.arg("token").length() > 0) {
+      saveCloudToken(server.arg("token").c_str());
+    }
     // Extract userId from stored token
     char tokenBuf[1200];
     if (loadCloudToken(tokenBuf, sizeof(tokenBuf))) {
@@ -1055,140 +917,6 @@ static void handleDebugToggle() {
   server.send(200, "text/plain", mqttDebugLog ? "ON" : "OFF");
 }
 
-// ---------------------------------------------------------------------------
-//  Cloud login endpoints
-// ---------------------------------------------------------------------------
-static void handleCloudLogin() {
-  String email = server.arg("email");
-  String pass = server.arg("password");
-  CloudRegion region = printers[0].config.region;
-
-  CloudResult r = cloudLogin(email.c_str(), pass.c_str(), region);
-
-  JsonDocument doc;
-  switch (r) {
-    case CLOUD_OK:          doc["status"] = "ok"; break;
-    case CLOUD_NEED_VERIFY: doc["status"] = "verify"; break;
-    case CLOUD_BAD_CREDS:   doc["status"] = "error"; doc["message"] = "Invalid email or password"; break;
-    default:                doc["status"] = "error"; doc["message"] = "Network or server error"; break;
-  }
-  String json;
-  serializeJson(doc, json);
-  server.send(200, "application/json", json);
-}
-
-static void handleCloudVerify() {
-  String email = server.arg("email");
-  String code = server.arg("code");
-  CloudRegion region = printers[0].config.region;
-
-  CloudResult r = cloudVerifyCode(email.c_str(), code.c_str(), region);
-
-  JsonDocument doc;
-  if (r == CLOUD_OK) {
-    doc["status"] = "ok";
-    char tokenBuf[1200];
-    if (loadCloudToken(tokenBuf, sizeof(tokenBuf))) {
-      CloudPrinter devs[8];
-      int count = cloudFetchDevices(tokenBuf, devs, 8, region);
-      JsonArray arr = doc["printers"].to<JsonArray>();
-      for (int i = 0; i < count; i++) {
-        JsonObject d = arr.add<JsonObject>();
-        d["serial"] = devs[i].serial;
-        d["name"] = devs[i].name;
-        d["model"] = devs[i].model;
-      }
-    }
-  } else {
-    doc["status"] = "error";
-    doc["message"] = (r == CLOUD_BAD_CREDS) ? "Invalid verification code" : "Verification failed";
-  }
-  String json;
-  serializeJson(doc, json);
-  server.send(200, "application/json", json);
-}
-
-static void handleCloudDevices() {
-  char tokenBuf[1200];
-  if (!loadCloudToken(tokenBuf, sizeof(tokenBuf))) {
-    server.send(200, "application/json", "{\"printers\":[]}");
-    return;
-  }
-  CloudRegion region = printers[0].config.region;
-  CloudPrinter devs[8];
-  int count = cloudFetchDevices(tokenBuf, devs, 8, region);
-
-  JsonDocument doc;
-  JsonArray arr = doc["printers"].to<JsonArray>();
-  for (int i = 0; i < count; i++) {
-    JsonObject d = arr.add<JsonObject>();
-    d["serial"] = devs[i].serial;
-    d["name"] = devs[i].name;
-    d["model"] = devs[i].model;
-  }
-  String json;
-  serializeJson(doc, json);
-  server.send(200, "application/json", json);
-}
-
-static void handleCloudToken() {
-  String token = server.arg("token");
-  if (token.length() < 20) {
-    server.send(200, "application/json", "{\"status\":\"error\",\"message\":\"Token too short\"}");
-    return;
-  }
-
-  // Save the token
-  saveCloudToken(token.c_str());
-  CloudRegion region = printers[0].config.region;
-
-  // Try to extract userId — JWT decode first, then profile API fallback
-  char uid[32] = {0};
-  if (!cloudExtractUserId(token.c_str(), uid, sizeof(uid))) {
-    if (!cloudFetchUserId(token.c_str(), uid, sizeof(uid), region)) {
-      server.send(200, "application/json", "{\"status\":\"error\",\"message\":\"Could not extract userId from token.\"}");
-      return;
-    }
-  }
-
-  Serial.printf("CLOUD: Token pasted, userId=%s\n", uid);
-
-  // Save serial+name+userId to printer config if provided
-  PrinterConfig& cfg = printers[0].config;
-  strlcpy(cfg.cloudUserId, uid, sizeof(cfg.cloudUserId));
-  if (server.hasArg("serial") && server.arg("serial").length() > 0) {
-    strlcpy(cfg.serial, server.arg("serial").c_str(), sizeof(cfg.serial));
-  }
-  if (server.hasArg("pname") && server.arg("pname").length() > 0) {
-    strlcpy(cfg.name, server.arg("pname").c_str(), sizeof(cfg.name));
-  }
-  savePrinterConfig(0);
-
-  JsonDocument doc;
-  doc["status"] = "ok";
-  doc["userId"] = uid;
-
-  // Try to fetch device list (may fail due to Cloudflare)
-  char tokenBuf[1200];
-  if (loadCloudToken(tokenBuf, sizeof(tokenBuf))) {
-    CloudPrinter devs[8];
-    int count = cloudFetchDevices(tokenBuf, devs, 8, region);
-    if (count > 0) {
-      JsonArray arr = doc["printers"].to<JsonArray>();
-      for (int i = 0; i < count; i++) {
-        JsonObject d = arr.add<JsonObject>();
-        d["serial"] = devs[i].serial;
-        d["name"] = devs[i].name;
-        d["model"] = devs[i].model;
-      }
-    }
-  }
-
-  String json;
-  serializeJson(doc, json);
-  server.send(200, "application/json", json);
-}
-
 static void handleCloudLogout() {
   clearCloudToken();
   server.send(200, "text/plain", "OK");
@@ -1216,10 +944,6 @@ void initWebServer() {
   server.on("/reset", HTTP_GET, handleReset);
   server.on("/debug", HTTP_GET, handleDebug);
   server.on("/debug/toggle", HTTP_POST, handleDebugToggle);
-  server.on("/cloud/login", HTTP_POST, handleCloudLogin);
-  server.on("/cloud/verify", HTTP_POST, handleCloudVerify);
-  server.on("/cloud/devices", HTTP_GET, handleCloudDevices);
-  server.on("/cloud/token", HTTP_POST, handleCloudToken);
   server.on("/cloud/logout", HTTP_POST, handleCloudLogout);
   server.onNotFound(handleNotFound);
   server.begin();

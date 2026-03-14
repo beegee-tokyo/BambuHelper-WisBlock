@@ -9,17 +9,16 @@ Connects to your printer via MQTT over TLS and displays a real-time dashboard wi
 | Connection Mode | Printers | How it connects |
 |---|---|---|
 | **LAN Direct** | P1P, P1S, X1, X1C, X1E, A1, A1 Mini | Local MQTT via printer IP + LAN access code |
-| **Bambu Cloud** | H2C, H2D, H2S, P2S | Cloud MQTT via Bambu account login |
-| **Bambu Cloud (All printers)** | Any Bambu printer | Cloud MQTT — no LAN mode needed |
+| **Bambu Cloud (All printers)** | Any Bambu printer | Cloud MQTT via access token — no LAN mode needed |
 
-> **Tip:** Use "Bambu Cloud (All printers)" if you don't want to enable LAN mode on your printer (e.g. to keep Bambu Handy working), or if your ESP32 is on a different network than the printer.
+> **Tip:** Use "Bambu Cloud (All printers)" if you don't want to enable LAN mode on your printer (e.g. to keep Bambu Handy working), if your ESP32 is on a different network than the printer, or if your printer only supports cloud mode (H2C, H2D, H2S, P2S).
 
 ### Cloud Mode Security Notice
 
-When using Bambu Cloud, BambuHelper connects through Bambu Lab's cloud MQTT service. This requires a one-time login with your Bambu Lab account credentials. Here's what you need to know:
+When using Bambu Cloud, BambuHelper connects through Bambu Lab's cloud MQTT service. Here's what you need to know:
 
-- **Your email and password are NOT stored** on the device. They are sent directly to Bambu Lab's official API (`api.bambulab.com`) over HTTPS, exactly the same way Bambu Studio and Bambu Handy do it.
-- **Only an auth token is stored** in the ESP32's flash memory. This token expires after ~3 months, at which point you simply re-login via the web interface.
+- **No credentials are stored** — BambuHelper never asks for your email or password. You extract an access token from your browser and paste it into the web interface.
+- **Only the access token is stored** in the ESP32's flash memory. This token expires after ~3 months, at which point you simply paste a new one.
 - **Read-only access** — BambuHelper only reads printer status. It never sends commands or modifies printer settings.
 - **Same approach as other community projects** — this is the same authentication method used by the [Home Assistant Bambu Lab integration](https://github.com/greghesp/ha-bambulab) (15,000+ users), [OctoPrint-Bambu](https://github.com/jneilliii/OctoPrint-Bambu), and other trusted third-party tools.
 
@@ -91,15 +90,16 @@ Adjust pin assignments in `platformio.ini` build_flags to match your wiring.
    - Serial number
    - LAN access code (8 characters, from printer Settings > Network)
 
-   **Bambu Cloud** (H2C, H2D, H2S, P2S) or **Bambu Cloud (All printers)**:
-   - **Option A: Direct login** — Click "Login to Bambu Cloud" and enter your Bambu Lab account email and password. Enter the 6-digit verification code sent to your email (if 2FA is enabled). Select your printer from the dropdown list.
-   - **Option B: Paste token** — If direct login fails (Cloudflare may block ESP32), get your token using the Python helper script and paste it into the "Paste Token" field. See [Getting a Cloud Token](#getting-a-cloud-token) below.
+   **Bambu Cloud (All printers)**:
+   - Get your Bambu Cloud access token from your browser (see [Getting a Cloud Token](#getting-a-cloud-token) below)
+   - Paste the token into the web interface
+   - Enter your printer's serial number (found in Bambu Handy or on the printer's label)
 
 6. **Save** - the device restarts and connects to your printer
 
 ### Getting a Cloud Token
 
-If direct cloud login from the ESP32 is blocked by Cloudflare, you can get your token on a PC and paste it:
+To use cloud mode, you need an access token from your Bambu Lab account. There are two ways to get it:
 
 **Using the Python helper script (recommended):**
 ```bash
@@ -115,7 +115,7 @@ The script will prompt for your email, password, and 2FA code, then print the to
 4. In the left sidebar, expand **Cookies** → click `https://bambulab.com`
 5. Find the row named `token` in the cookie list
 6. Double-click the **Value** cell to select it, then **Ctrl+C** to copy
-7. Paste the value into BambuHelper's "Paste Token" field in the web interface
+7. Paste the value into BambuHelper's "Access Token" field in the web interface
 
 **Using browser DevTools (Firefox):**
 1. Open https://bambulab.com and log in to your account
@@ -124,16 +124,16 @@ The script will prompt for your email, password, and 2FA code, then print the to
 4. In the left sidebar, expand **Cookies** → click `https://bambulab.com`
 5. Find the row named `token`
 6. Double-click the **Value** cell to select it, then **Ctrl+C** to copy
-7. Paste the value into BambuHelper's "Paste Token" field
+7. Paste the value into BambuHelper's "Access Token" field
 
 **Using browser DevTools (Safari):**
 1. Open https://bambulab.com and log in to your account
 2. Open **Develop** → **Show Web Inspector** (enable the Develop menu first in Safari Preferences → Advanced)
 3. Go to the **Storage** tab → **Cookies** → `bambulab.com`
 4. Find and copy the `token` value
-5. Paste it into BambuHelper's "Paste Token" field
+5. Paste it into BambuHelper's "Access Token" field
 
-> **Note:** The token is valid for approximately 3 months. When it expires, the ESP32 will fail to connect — simply repeat the process above to get a new token. Make sure to select the correct **Server Region** (US/EU/CN) in the web interface to match your Bambu account's region.
+> **Note:** The token is valid for approximately 3 months. When it expires, the ESP32 will fail to connect — simply repeat the process above to get a fresh token and paste it in the web interface. Make sure to select the correct **Server Region** (US/EU/CN) to match your Bambu account's region.
 
 ## Web Interface
 
@@ -154,12 +154,11 @@ The built-in web interface (accessible at the device's IP address) provides the 
 
 ### Printer Settings
 - **Enable Monitoring** - toggle printer connection on/off
-- **Connection Mode** - LAN Direct, Bambu Cloud (H2/P2S), or Bambu Cloud (All printers)
+- **Connection Mode** - LAN Direct or Bambu Cloud (All printers)
 - **LAN mode fields:**
   - Printer Name, Printer IP Address, Serial Number, LAN Access Code
 - **Cloud mode fields:**
-  - Bambu account login (email + password + optional 2FA)
-  - Printer selection from your account's device list
+  - Server Region (US/EU/CN), Access Token, Printer Serial Number, Printer Name
 - **Live Stats** - real-time nozzle/bed temp, progress, fan speed, and connection status
 
 ### Display
@@ -215,9 +214,9 @@ src/
   main.cpp              Setup/loop orchestrator
   settings.cpp          NVS persistence (WiFi, network, printer, display, power, cloud token)
   wifi_manager.cpp      WiFi STA + AP fallback, static IP support
-  web_server.cpp        Config portal (HTML embedded, cloud login endpoints)
+  web_server.cpp        Config portal (HTML embedded, token management)
   bambu_mqtt.cpp        MQTT over TLS, delta merge (local + cloud broker)
-  bambu_cloud.cpp       Bambu Cloud API (login, 2FA, device list)
+  bambu_cloud.cpp       Bambu Cloud helpers (region URLs, JWT userId extraction)
   display_ui.cpp        Screen state machine
   display_gauges.cpp    Arc gauges, progress bar, temp gauges
   display_anim.cpp      Animations (spinner, pulse, dots)

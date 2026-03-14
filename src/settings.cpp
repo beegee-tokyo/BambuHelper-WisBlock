@@ -116,6 +116,7 @@ void loadSettings() {
 
     snprintf(key, sizeof(key), "p%d_mode", i);
     cfg.mode = (ConnMode)prefs.getUChar(key, CONN_LOCAL);
+    if (cfg.mode == CONN_CLOUD) cfg.mode = CONN_CLOUD_ALL;  // migrate legacy value
 
     snprintf(key, sizeof(key), "p%d_cuid", i);
     strlcpy(cfg.cloudUserId, prefs.getString(key, "").c_str(), sizeof(cfg.cloudUserId));
