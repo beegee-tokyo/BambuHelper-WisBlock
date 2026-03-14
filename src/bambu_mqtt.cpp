@@ -421,14 +421,15 @@ void handleBambuMqtt() {
     mqttClient->loop();
 
     // Pushall: request full status from printer
-    // Cloud mode uses longer interval to avoid rate limiting
-    // Backoff when idle: 2x after 5min, 4x after 30min (capped at 10min)
+    // Cloud mode: backoff when idle, then go fully passive (rely on delta stream)
+    // Local mode: always poll (no cloud concern, direct LAN connection)
+    bool cloudIdle = isCloudMode(cfg.mode) && idleSince > 0;
+    bool cloudPassive = cloudIdle && (millis() - idleSince > 600000UL);  // >10 min idle
+
     unsigned long pushallInterval = isCloudMode(cfg.mode) ? BAMBU_PUSHALL_INTERVAL * 4 : BAMBU_PUSHALL_INTERVAL;
-    if (idleSince > 0) {
+    if (cloudIdle && !cloudPassive) {
       unsigned long idleMs = millis() - idleSince;
-      if (idleMs > 1800000UL) pushallInterval *= 4;       // >30 min idle
-      else if (idleMs > 300000UL) pushallInterval *= 2;    // >5 min idle
-      if (pushallInterval > 600000UL) pushallInterval = 600000UL;  // cap at 10 min
+      if (idleMs > 300000UL) pushallInterval *= 2;    // >5 min idle: 4 min
     }
 
     // Delayed initial pushall (after connect)
@@ -447,8 +448,9 @@ void handleBambuMqtt() {
       requestPushall();
     }
 
-    // Periodic pushall
-    if (initialPushallSent && diag.messagesRx > 0 &&
+    // Periodic pushall — skip entirely when cloud mode is fully passive
+    if (!cloudPassive &&
+        initialPushallSent && diag.messagesRx > 0 &&
         millis() - lastPushallRequest > pushallInterval) {
       esp_task_wdt_reset();
       requestPushall();
