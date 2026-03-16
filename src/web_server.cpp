@@ -439,6 +439,10 @@ static const char PAGE_HTML[] PROGMEM = R"rawliteral(
         <option value="660" %TZ_660%>UTC+11:00</option>
         <option value="720" %TZ_720%>UTC+12:00 (Auckland)</option>
       </select>
+      <div class="check-row">
+        <input type="checkbox" id="dst" value="1" %DST%>
+        <label for="dst">Daylight Saving Time (+1h)</label>
+      </div>
 
       <button type="button" class="btn btn-primary" onclick="saveWifi()">Save WiFi &amp; Restart</button>
 
@@ -561,6 +565,7 @@ function saveWifi(){
   p.append('net_dns',document.getElementById('net_dns').value);
   if(document.getElementById('showip').checked) p.append('showip','1');
   p.append('tz',document.getElementById('tz').value);
+  if(document.getElementById('dst').checked) p.append('dst','1');
   fetch('/save/wifi',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:p.toString()})
     .then(function(){
       document.body.innerHTML='<div style="text-align:center;padding-top:80px"><h2 style="color:#3FB950">WiFi Saved!</h2><p style="color:#8B949E;margin-top:10px">Restarting...</p></div>';
@@ -781,6 +786,8 @@ static String processTemplate(const String& html) {
     }
   }
 
+  page.replace("%DST%", netSettings.dstEnabled ? "checked" : "");
+
   // Rotation dropdown
   page.replace("%ROT0%", dispSettings.rotation == 0 ? "selected" : "");
   page.replace("%ROT1%", dispSettings.rotation == 1 ? "selected" : "");
@@ -952,6 +959,7 @@ static void handleSaveWifi() {
   if (server.hasArg("net_dns")) strlcpy(netSettings.dns, server.arg("net_dns").c_str(), sizeof(netSettings.dns));
   netSettings.showIPAtStartup = server.hasArg("showip");
   if (server.hasArg("tz")) netSettings.gmtOffsetMin = server.arg("tz").toInt();
+  netSettings.dstEnabled = server.hasArg("dst");
 
   saveSettings();
 

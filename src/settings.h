@@ -33,6 +33,7 @@ struct NetworkSettings {
   char dns[16];
   bool showIPAtStartup;   // show IP screen for 3s after WiFi connects
   int16_t gmtOffsetMin;   // timezone offset in minutes (e.g. 60 = UTC+1, 330 = UTC+5:30)
+  bool dstEnabled;        // daylight saving time (+1h)
 };
 
 // Display power settings

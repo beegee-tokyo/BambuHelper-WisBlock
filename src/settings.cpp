@@ -152,6 +152,7 @@ void loadSettings() {
   strlcpy(netSettings.dns, prefs.getString("net_dns", "").c_str(), sizeof(netSettings.dns));
   netSettings.showIPAtStartup = prefs.getBool("net_showip", true);
   netSettings.gmtOffsetMin = prefs.getShort("net_tz", 60);  // default UTC+1 (CET)
+  netSettings.dstEnabled = prefs.getBool("net_dst", false);
 
   // Display power settings
   dpSettings.finishDisplayMins = prefs.getUShort("dp_fmins", 3);
@@ -211,6 +212,7 @@ void saveSettings() {
   prefs.putString("net_dns", netSettings.dns);
   prefs.putBool("net_showip", netSettings.showIPAtStartup);
   prefs.putShort("net_tz", netSettings.gmtOffsetMin);
+  prefs.putBool("net_dst", netSettings.dstEnabled);
 
   // Display power settings
   prefs.putUShort("dp_fmins", dpSettings.finishDisplayMins);

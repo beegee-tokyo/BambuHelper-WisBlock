@@ -292,10 +292,21 @@ static void drawIdleNoPrinter() {
   tft.drawString(WiFi.localIP().toString().c_str(), SCREEN_W / 2, 200);
 }
 
+static bool wasNoPrinter = false;
+
 static void drawIdle() {
   if (!isAnyPrinterConfigured()) {
+    wasNoPrinter = true;
     drawIdleNoPrinter();
     return;
+  }
+
+  // Transition from "no printer" to configured — clear stale screen
+  if (wasNoPrinter) {
+    wasNoPrinter = false;
+    tft.fillScreen(dispSettings.bgColor);
+    memset(&prevState, 0, sizeof(prevState));
+    forceRedraw = true;
   }
 
   PrinterSlot& p = displayedPrinter();
