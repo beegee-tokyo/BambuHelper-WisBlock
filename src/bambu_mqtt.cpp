@@ -25,6 +25,7 @@ struct MqttConn {
   unsigned long idleSince;
   bool active;           // connection slot in use
   uint16_t consecutiveFails;  // for exponential backoff
+  unsigned long disconnectSince;  // grace period before showing "connecting" screen
 };
 
 static MqttConn conns[MAX_ACTIVE_PRINTERS];
@@ -490,11 +491,25 @@ static void handleConn(MqttConn& c) {
   PrinterConfig& cfg = printers[c.slotIndex].config;
   BambuState& s = printers[c.slotIndex].state;
 
+  // Call loop() FIRST so PubSubClient processes incoming data and detects
+  // broker-side disconnects before we check connected().
+  if (c.mqtt && c.mqtt->connected()) {
+    c.mqtt->loop();
+  }
+
   if (!c.mqtt || !c.mqtt->connected()) {
+    // Grace period: don't flag as disconnected until gone for 3s.
+    // This prevents screen flicker on momentary cloud drops.
+    if (c.disconnectSince == 0) {
+      c.disconnectSince = millis();
+    }
+    if (s.connected && millis() - c.disconnectSince < 3000) {
+      return;  // still within grace period, skip reconnect
+    }
     s.connected = false;
     reconnectConn(c);
   } else {
-    c.mqtt->loop();
+    c.disconnectSince = 0;  // reset grace timer on healthy connection
 
     bool cloudIdle = isCloudMode(cfg.mode) && c.idleSince > 0;
     bool cloudPassive = cloudIdle && (millis() - c.idleSince > 600000UL);
@@ -604,6 +619,7 @@ void initBambuMqtt() {
     c.initialPushallSent = false;
     c.idleSince = 0;
     c.consecutiveFails = 0;
+    c.disconnectSince = 0;
 
     BambuState& s = printers[i].state;
     memset(&s, 0, sizeof(BambuState));
