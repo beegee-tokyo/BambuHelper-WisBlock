@@ -43,6 +43,22 @@
 - **Better paddle AI** - paddle predicts ball landing position instead of tracking ball X directly; stays put when ball goes up instead of drifting to center
 - **More natural ball movement** - enforced minimum horizontal speed (1.2) after paddle bounce to prevent near-vertical trajectories
 
+## Cloud MQTT stability fix (IMPORTANT)
+
+- **Fixed cloud reconnect loop** - cloud printers (H2C, H2D, H2S, P2S) could enter a disconnect/reconnect cycle every 5-100 seconds with TLS error 49 (access_denied). Root cause: static MQTT client ID caused session collisions on the Bambu Cloud broker when the previous TLS session hadn't fully closed server-side
+- **Random client ID for cloud** - each cloud connection now uses a unique random client ID (like pybambu/Home Assistant), preventing broker session conflicts
+- **Clean TLS on cloud reconnect** - TLS and MQTT objects are fully destroyed and recreated before each cloud reconnect, eliminating stale session state
+- **Initial-only pushall for cloud** - cloud sends one pushall request after connecting (for immediate full status), but no periodic pushall - cloud broker pushes updates automatically and repeated publishing could trigger access_denied
+- **Instant first connection** - removed unnecessary 30s delay before the first cloud reconnect attempt, reducing initial connection time from ~23s to ~3s
+- **Smart backoff** - connections lasting less than 30s no longer reset the backoff counter, preventing aggressive reconnect spam when the broker is rejecting connections
+- **Cloud reconnect interval 30s** - increased from 10s to reduce broker rate limit risk
+- **CA certificate bundle for cloud** - cloud TLS now uses proper certificate verification instead of setInsecure()
+- **Disconnect diagnostics** - logs PubSubClient rc code, TLS error, connection duration, and message count on every disconnect for easier debugging
+
+## Connecting screen improvements
+
+- **Slide bar animation** - replaced the rotating arc spinner with a smooth sliding progress bar on both WiFi and MQTT connecting screens (fixes visual glitch where the arc would briefly show as a full circle during wrap-around)
+
 ## Display fixes
 
 - **Pong clock text size bug** - switching from Pong clock to printer dashboard no longer shows garbled oversized text (tft.setTextSize was not reset)
@@ -60,6 +76,6 @@
 
 ## Build stats
 
-- Flash: 84.4% (1106KB / 1310KB)
+- Flash: 89.3% (1170KB / 1310KB) - higher due to CA certificate bundle for cloud TLS
 - RAM: 15.7% (51KB / 328KB)
 - Board: lolin_s3_mini (ESP32-S3)

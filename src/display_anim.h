@@ -13,6 +13,10 @@ void drawAnimDots(TFT_eSPI& tft, int16_t x, int16_t y, uint16_t color);
 // Pulsing glow on arc edge (returns brightness factor 0.5-1.0)
 float getPulseFactor();
 
+// Indeterminate slide bar (call each frame — uses millis() internally)
+void drawSlideBar(TFT_eSPI& tft, int16_t x, int16_t y, int16_t w, int16_t h,
+                  uint16_t color, uint16_t trackColor);
+
 // Completion animation: expanding checkmark ring
 void drawCompletionAnim(TFT_eSPI& tft, int16_t cx, int16_t cy, bool reset);
 

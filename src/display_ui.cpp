@@ -212,14 +212,19 @@ static void drawAPMode() {
 static void drawConnectingWiFi() {
   tft.setTextDatum(MC_DATUM);
 
-  drawSpinner(tft, SCREEN_W / 2, SCREEN_H / 2 - 30, 35, CLR_BLUE);
-
+  // Title
   tft.setTextFont(2);
   tft.setTextColor(CLR_TEXT, CLR_BG);
-  tft.drawString("Connecting to WiFi", SCREEN_W / 2, SCREEN_H / 2 + 20);
+  tft.drawString("Connecting to WiFi", SCREEN_W / 2, SCREEN_H / 2 - 20);
 
   int16_t tw = tft.textWidth("Connecting to WiFi");
-  drawAnimDots(tft, SCREEN_W / 2 + tw / 2, SCREEN_H / 2 + 14, CLR_TEXT);
+  drawAnimDots(tft, SCREEN_W / 2 + tw / 2, SCREEN_H / 2 - 26, CLR_TEXT);
+
+  // Slide bar
+  const int16_t barW = 180;
+  const int16_t barH = 8;
+  drawSlideBar(tft, (SCREEN_W - barW) / 2, SCREEN_H / 2 + 4,
+               barW, barH, CLR_BLUE, CLR_TRACK);
 }
 
 // ---------------------------------------------------------------------------
@@ -255,18 +260,22 @@ static void drawWiFiConnected() {
 static void drawConnectingMQTT() {
   tft.setTextDatum(MC_DATUM);
 
-  drawSpinner(tft, SCREEN_W / 2, SCREEN_H / 2 - 50, 30, CLR_ORANGE);
-
+  // Title
   tft.setTextFont(2);
   tft.setTextColor(CLR_TEXT, CLR_BG);
-  tft.drawString("Connecting to Printer", SCREEN_W / 2, SCREEN_H / 2);
+  tft.drawString("Connecting to Printer", SCREEN_W / 2, SCREEN_H / 2 - 40);
 
   int16_t tw = tft.textWidth("Connecting to Printer");
-  drawAnimDots(tft, SCREEN_W / 2 + tw / 2, SCREEN_H / 2 - 6, CLR_TEXT);
+  drawAnimDots(tft, SCREEN_W / 2 + tw / 2, SCREEN_H / 2 - 46, CLR_TEXT);
+  tft.setTextDatum(MC_DATUM);
 
-  tft.setTextDatum(MC_DATUM);  // restore after drawAnimDots
+  // Slide bar
+  const int16_t barW = 180;
+  const int16_t barH = 8;
+  drawSlideBar(tft, (SCREEN_W - barW) / 2, SCREEN_H / 2 - 14,
+               barW, barH, CLR_ORANGE, CLR_TRACK);
 
-  // Show connection mode + printer info
+  // Connection mode + printer info
   PrinterSlot& p = displayedPrinter();
   tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
   tft.setTextFont(2);
@@ -280,50 +289,33 @@ static void drawConnectingMQTT() {
     snprintf(infoBuf, sizeof(infoBuf), "[%s] %s",  modeStr,
              strlen(p.config.ip) > 0 ? p.config.ip : "no IP!");
   }
-  tft.drawString(infoBuf, SCREEN_W / 2, SCREEN_H / 2 + 20);
+  tft.drawString(infoBuf, SCREEN_W / 2, SCREEN_H / 2 + 10);
 
   // Elapsed time
   if (connectScreenStart > 0) {
     unsigned long elapsed = (millis() - connectScreenStart) / 1000;
     char elBuf[16];
     snprintf(elBuf, sizeof(elBuf), "%lus", elapsed);
-    tft.fillRect(SCREEN_W / 2 - 30, SCREEN_H / 2 + 32, 60, 16, CLR_BG);
-    tft.drawString(elBuf, SCREEN_W / 2, SCREEN_H / 2 + 40);
+    tft.fillRect(SCREEN_W / 2 - 30, SCREEN_H / 2 + 22, 60, 16, CLR_BG);
+    tft.drawString(elBuf, SCREEN_W / 2, SCREEN_H / 2 + 30);
   }
 
-  // Diagnostics info
+  // Diagnostics (only after first attempt)
   const MqttDiag& d = getMqttDiag(rotState.displayIndex);
   if (d.attempts > 0) {
-    tft.fillRect(0, SCREEN_H / 2 + 48, SCREEN_W, 72, CLR_BG);
     tft.setTextFont(1);
     tft.setTextDatum(MC_DATUM);
 
-    // Attempt count
     char buf[40];
     snprintf(buf, sizeof(buf), "Attempt: %u", d.attempts);
     tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
-    tft.drawString(buf, SCREEN_W / 2, SCREEN_H / 2 + 56);
+    tft.drawString(buf, SCREEN_W / 2, SCREEN_H / 2 + 50);
 
-    // TCP status
-    if (d.tcpOk) {
-      tft.setTextColor(CLR_GREEN, CLR_BG);
-      tft.drawString("TCP: OK", SCREEN_W / 2, SCREEN_H / 2 + 68);
-    } else if (d.lastRc != 0) {
-      tft.setTextColor(CLR_RED, CLR_BG);
-      tft.drawString("TCP: fail", SCREEN_W / 2, SCREEN_H / 2 + 68);
-    }
-
-    // Last error
     if (d.lastRc != 0) {
       snprintf(buf, sizeof(buf), "Err: %s", mqttRcToString(d.lastRc));
       tft.setTextColor(CLR_RED, CLR_BG);
-      tft.drawString(buf, SCREEN_W / 2, SCREEN_H / 2 + 80);
+      tft.drawString(buf, SCREEN_W / 2, SCREEN_H / 2 + 62);
     }
-
-    // Heap
-    snprintf(buf, sizeof(buf), "Heap: %uK", d.freeHeap / 1024);
-    tft.setTextColor(CLR_TEXT_DARK, CLR_BG);
-    tft.drawString(buf, SCREEN_W / 2, SCREEN_H / 2 + 92);
   }
 }
 
@@ -828,8 +820,9 @@ void updateDisplay() {
     if (currentScreen == SCREEN_CONNECTING_MQTT) {
       connectScreenStart = millis();
     }
-    if (currentScreen == SCREEN_CLOCK && dispSettings.pongClock) {
-      resetPongClock();
+    if (currentScreen == SCREEN_CLOCK) {
+      if (dispSettings.pongClock) resetPongClock();
+      else resetClock();
     }
     prevScreen = currentScreen;
   }

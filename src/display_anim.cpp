@@ -62,6 +62,23 @@ void drawAnimDots(TFT_eSPI& tft, int16_t x, int16_t y, uint16_t color) {
 }
 
 // ---------------------------------------------------------------------------
+//  Indeterminate slide bar — a glowing segment slides back and forth
+// ---------------------------------------------------------------------------
+void drawSlideBar(TFT_eSPI& tft, int16_t x, int16_t y, int16_t w, int16_t h,
+                  uint16_t color, uint16_t trackColor) {
+  // Draw track (also erases previous segment position)
+  tft.fillRoundRect(x, y, w, h, h / 2, trackColor);
+
+  // Segment: 25% of bar width, bounces smoothly using sine
+  const int16_t segW = w / 4;
+  float t = (millis() % 1600) / 1600.0f;
+  float pos = (sinf(t * 2.0f * PI - PI / 2.0f) + 1.0f) / 2.0f; // 0..1
+  int16_t segX = x + (int16_t)(pos * (float)(w - segW));
+
+  tft.fillRoundRect(segX, y, segW, h, h / 2, color);
+}
+
+// ---------------------------------------------------------------------------
 //  Pulse factor for glow effects
 // ---------------------------------------------------------------------------
 float getPulseFactor() {

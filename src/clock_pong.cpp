@@ -184,12 +184,35 @@ static void markBallDamage(int bx, int by) {
   }
 }
 
+// Check if ball rect overlaps the time digits or date text
+static bool overlapsText(int bx, int by) {
+  int bx2 = bx + ARK_BALL_SIZE;
+  int by2 = by + ARK_BALL_SIZE;
+  // Time digits zone
+  if (by2 > ARK_TIME_Y && by < ARK_TIME_Y + DIGIT_H) {
+    int tLeft = digitX(0);
+    int tRight = digitX(4) + DIGIT_W + 2;
+    if (bx2 > tLeft && bx < tRight) return true;
+  }
+  // Date zone (top of screen)
+  if (by2 > ARK_DATE_Y && by < ARK_DATE_Y + 16) return true;
+  return false;
+}
+
 static void drawBall() {
   if (prevBallX >= 0) {
-    tft.fillRect(prevBallX, prevBallY, ARK_BALL_SIZE, ARK_BALL_SIZE, TFT_BLACK);
-    markBallDamage(prevBallX, prevBallY);
+    // Ball passes behind time digits: skip erase if overlapping,
+    // just mark damage so drawTime() redraws cleanly
+    if (overlapsText(prevBallX, prevBallY)) {
+      markBallDamage(prevBallX, prevBallY);
+    } else {
+      tft.fillRect(prevBallX, prevBallY, ARK_BALL_SIZE, ARK_BALL_SIZE, TFT_BLACK);
+    }
   }
-  tft.fillRect((int)ballX, (int)ballY, ARK_BALL_SIZE, ARK_BALL_SIZE, TFT_WHITE);
+  // Don't draw ball over time digits — it passes behind
+  if (!overlapsText((int)ballX, (int)ballY)) {
+    tft.fillRect((int)ballX, (int)ballY, ARK_BALL_SIZE, ARK_BALL_SIZE, TFT_WHITE);
+  }
   prevBallX = (int)ballX;
   prevBallY = (int)ballY;
 }

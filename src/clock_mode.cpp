@@ -6,11 +6,15 @@
 
 static int prevMinute = -1;
 
+void resetClock() {
+  prevMinute = -1;
+}
+
 void drawClock() {
   struct tm now;
   if (!getLocalTime(&now, 0)) return;
 
-  // Only redraw when minute changes (or on first draw via forceRedraw)
+  // Only redraw when minute changes (resetClock() forces redraw)
   if (now.tm_min == prevMinute) return;
   prevMinute = now.tm_min;
 

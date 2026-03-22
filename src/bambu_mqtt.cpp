@@ -509,7 +509,8 @@ static void reconnectConn(MqttConn& c) {
     interval = BAMBU_BACKOFF_PHASE2_MS;
   }
 
-  if (now - c.lastReconnectAttempt < interval) return;
+  // First attempt is immediate; subsequent attempts respect the interval
+  if (c.diag.attempts > 0 && now - c.lastReconnectAttempt < interval) return;
 
   c.diag.attempts++;
   c.diag.lastAttemptMs = now;
@@ -667,17 +668,20 @@ static void handleConn(MqttConn& c) {
   } else {
     c.disconnectSince = 0;  // reset grace timer on healthy connection
 
-    // Cloud pushes data automatically — publishing to the request topic
-    // may trigger access_denied (TLS alert 49) on the cloud broker.
-    // Only request pushall for LAN connections.
-    if (!isCloudMode(cfg.mode)) {
-      if (!c.initialPushallSent && c.connectTime > 0 &&
-          millis() - c.connectTime > BAMBU_PUSHALL_INITIAL_DELAY) {
-        esp_task_wdt_reset();
-        requestPushall(c);
-        c.initialPushallSent = true;
-      }
+    // Initial pushall: request full status once after connecting.
+    // Cloud also gets this — without it, display shows "waiting" until
+    // the broker naturally sends a full status (can take minutes).
+    if (!c.initialPushallSent && c.connectTime > 0 &&
+        millis() - c.connectTime > BAMBU_PUSHALL_INITIAL_DELAY) {
+      esp_task_wdt_reset();
+      requestPushall(c);
+      c.initialPushallSent = true;
+    }
 
+    // Periodic pushall and retry: LAN only.
+    // Cloud pushes data automatically; repeated publish to request topic
+    // may trigger access_denied (TLS alert 49) on the cloud broker.
+    if (!isCloudMode(cfg.mode)) {
       if (c.initialPushallSent && c.diag.messagesRx == 0 &&
           millis() - c.lastPushallRequest > 10000) {
         MQTT_LOG("[%d] No data after pushall, retrying...", c.slotIndex);
@@ -690,8 +694,6 @@ static void handleConn(MqttConn& c) {
         esp_task_wdt_reset();
         requestPushall(c);
       }
-    } else {
-      c.initialPushallSent = true;  // suppress "no data" retry logic
     }
   }
 

@@ -11,6 +11,7 @@
 
 static unsigned long splashEnd = 0;
 static unsigned long finishScreenStart = 0;
+static unsigned long idleClockStart = 0;  // when all printers became idle
 static char prevGcodeState[MAX_ACTIVE_PRINTERS][16] = {{0}};
 
 // ---------------------------------------------------------------------------
@@ -130,6 +131,7 @@ void loop() {
         // Wake from sleep + reset backoff for immediate reconnect
         setBacklight(brightness);
         finishScreenStart = 0;
+        idleClockStart = 0;
         resetMqttBackoff();
         setScreenState(SCREEN_IDLE);  // state machine will correct on next loop
       } else if (getActiveConnCount() >= 2) {
@@ -201,14 +203,39 @@ void loop() {
       }
     } else if (s.connected && !s.printing &&
                strcmp(s.gcodeState, "FINISH") != 0) {
-      if (current == SCREEN_OFF || current == SCREEN_CLOCK) {
-        setBacklight(brightness);
-      }
-      if (current != SCREEN_IDLE) {
+      // Stay in CLOCK/OFF — only button press or print start exits these
+      if (current == SCREEN_CLOCK || current == SCREEN_OFF) {
+        // nothing — let clock/off persist while printer is idle
+      } else if (current != SCREEN_IDLE) {
         setScreenState(SCREEN_IDLE);
         finishScreenStart = 0;
+        idleClockStart = 0;
       }
     }
+  }
+
+  // Idle → Clock: if all printers are idle and showClockAfterFinish is on,
+  // transition to clock after finishDisplayMins (same timeout as FINISH→clock).
+  ScreenState cur = getScreenState();
+  if (cur == SCREEN_IDLE && dpSettings.showClockAfterFinish &&
+      !dpSettings.keepDisplayOn && dpSettings.finishDisplayMins > 0) {
+    bool anyBusy = false;
+    for (uint8_t i = 0; i < MAX_ACTIVE_PRINTERS; i++) {
+      if (isPrinterConfigured(i) && printers[i].state.connected && printers[i].state.printing) {
+        anyBusy = true;
+        break;
+      }
+    }
+    if (!anyBusy) {
+      if (idleClockStart == 0) idleClockStart = millis();
+      if (millis() - idleClockStart > (unsigned long)dpSettings.finishDisplayMins * 60000UL) {
+        setScreenState(SCREEN_CLOCK);
+      }
+    } else {
+      idleClockStart = 0;
+    }
+  } else if (cur != SCREEN_IDLE) {
+    idleClockStart = 0;
   }
 
   // Check for error state transition on any printer

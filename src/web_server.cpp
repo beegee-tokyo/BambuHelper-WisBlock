@@ -267,7 +267,7 @@ static const char PAGE_HTML[] PROGMEM = R"rawliteral(
         <input type="checkbox" id="abar" value="1" %ABAR%>
         <label for="abar">Animated progress bar (shimmer effect)</label>
       </div>
-      <div class="check-row">
+      <div class="check-row" id="pong-row">
         <input type="checkbox" id="pong" value="1" %PONG%>
         <label for="pong">Pong clock (animated Breakout game as clock screen)</label>
       </div>
@@ -805,6 +805,19 @@ function importSettings(){
       stat.innerHTML='<span style="color:#F85149">Upload failed</span>';
     });
 }
+
+// Pong clock checkbox depends on clock-after-print being enabled
+(function(){
+  var clk=document.getElementById('clock');
+  var pong=document.getElementById('pong');
+  var row=document.getElementById('pong-row');
+  function upd(){
+    pong.disabled=!clk.checked;
+    row.style.opacity=clk.checked?'1':'0.4';
+  }
+  clk.onchange=upd;
+  upd();
+})();
 </script>
 </body>
 </html>
