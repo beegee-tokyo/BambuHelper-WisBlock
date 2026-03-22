@@ -11,7 +11,8 @@ static const unsigned long DEBOUNCE_MS = 50;
 /** Touch screen driver instance */
 FT6336U ft6336u;
 bool wait_for_touch = true;
-#define BTN_LOG(fmt, ...) do { Serial.printf("BTN: " fmt "\n", ##__VA_ARGS__); } while(0)
+bool btnDebugLog = false;
+#define BTN_LOG(fmt, ...) do { if (btnDebugLog) Serial.printf("BTN: " fmt "\n", ##__VA_ARGS__); } while(0)
 
 static void keyIntHandle(void) 
 {
@@ -29,6 +30,8 @@ void initButton()
   ft6336u.begin();
   attachInterrupt(digitalPinToInterrupt(WB_IO6), keyIntHandle, FALLING);
   BTN_LOG("BTN initialized");
+  buttonType = BTN_PUSH;
+  return;
 #else
   if (buttonType == BTN_DISABLED || buttonPin == 0)
     return;
