@@ -22,18 +22,23 @@ extern TFT_eSPI tft;
 #define ARK_BRICK_H       8
 #define ARK_BRICK_GAP     2
 #define ARK_BRICK_START_X 3
-#define ARK_BRICK_START_Y 30
+#define ARK_BRICK_START_Y 28
 #define ARK_BALL_SIZE     4
-#define ARK_PADDLE_Y      220
+#define ARK_PADDLE_Y      224
 #define ARK_PADDLE_H      4
 #define ARK_PADDLE_W      30
-#define ARK_TIME_Y        120
-#define ARK_DATE_Y        6
+#define ARK_TIME_Y        130
+#define ARK_DATE_Y        8
 #define ARK_BALL_SPEED    3.0f
 #define ARK_PADDLE_SPEED  4
 #define ARK_UPDATE_MS     20    // ~50fps
 #define ARK_MAX_FRAGS     20
 #define ARK_TIME_OVERRIDE_MS 60000
+
+// Font 7 digit dimensions (48px tall, variable width)
+#define DIGIT_W  32
+#define DIGIT_H  48
+#define COLON_W  12
 
 // Brick colors per row (classic Arcanoid rainbow)
 static const uint16_t brickColors[ARK_BRICK_ROWS] = {
@@ -43,9 +48,6 @@ static const uint16_t brickColors[ARK_BRICK_ROWS] = {
   0x07E0,  // Green
   0x001F,  // Blue
 };
-
-// Digit X positions (textSize 4 = 24px wide, centered for 240px)
-static const int DIGIT_X[5] = {40, 74, 108, 142, 176};
 
 // ========== Fragment struct ==========
 struct PongFragment {
@@ -84,6 +86,11 @@ static int fragTimer = 0;
 static float digitOffsetY[5] = {0};
 static float digitVelocity[5] = {0};
 static int prevDigitY[5] = {0};
+
+// Draw cache - avoid redrawing unchanged digits
+static char prevDigits[6] = {0};  // 5 chars + null
+static bool prevColon = false;
+static char prevDateStr[20] = {0};
 
 // ========== Digit bounce (inlined) ==========
 static void triggerBounce(int i) {
@@ -146,16 +153,42 @@ static void clearBrick(int r, int c) {
 static void spawnBall() {
   ballX = paddleX;
   ballY = ARK_PADDLE_Y - ARK_BALL_SIZE - 2;
-  float angle = random(30, 150) * PI / 180.0f;
+  float angle = random(40, 140) * PI / 180.0f;
   ballVX = ARK_BALL_SPEED * cos(angle);
   ballVY = -ARK_BALL_SPEED * sin(angle);
+  // Ensure minimum horizontal movement
+  if (fabsf(ballVX) < 1.2f) ballVX = (ballVX >= 0) ? 1.2f : -1.2f;
   if (fabsf(ballVY) < 1.0f) ballVY = -2.0f;
   ballActive = true;
 }
 
+static int digitX(int i);  // forward declaration
+
+// Mark cached text dirty if ball erase overlaps it
+static void markBallDamage(int bx, int by) {
+  int bx2 = bx + ARK_BALL_SIZE;
+  int by2 = by + ARK_BALL_SIZE;
+  // Check time digits and colon
+  for (int i = 0; i < 5; i++) {
+    int dx = digitX(i);
+    int dw = (i == 2) ? COLON_W : DIGIT_W + 2;
+    int dy = (i == 2) ? ARK_TIME_Y : (prevDigitY[i] ? prevDigitY[i] : ARK_TIME_Y);
+    if (bx2 > dx && bx < dx + dw && by2 > dy && by < dy + DIGIT_H) {
+      if (i == 2) prevColon = !showColon();  // force colon redraw
+      else prevDigits[i] = 0;
+    }
+  }
+  // Check date area
+  if (by2 > ARK_DATE_Y && by < ARK_DATE_Y + 16) {
+    prevDateStr[0] = '\0';
+  }
+}
+
 static void drawBall() {
-  if (prevBallX >= 0)
+  if (prevBallX >= 0) {
     tft.fillRect(prevBallX, prevBallY, ARK_BALL_SIZE, ARK_BALL_SIZE, TFT_BLACK);
+    markBallDamage(prevBallX, prevBallY);
+  }
   tft.fillRect((int)ballX, (int)ballY, ARK_BALL_SIZE, ARK_BALL_SIZE, TFT_WHITE);
   prevBallX = (int)ballX;
   prevBallY = (int)ballY;
@@ -171,7 +204,14 @@ static void drawPaddle() {
 }
 
 static void updatePaddle() {
-  int target = (ballActive && ballVY > 0) ? (int)ballX : 120;
+  int target;
+  if (ballActive && ballVY > 0) {
+    // Ball falling - follow ball X position with slight offset for variety
+    target = (int)ballX;
+  } else {
+    // Ball going up - drift toward center for variety
+    target = 120;
+  }
   if (paddleX < target - 2) paddleX += ARK_PADDLE_SPEED;
   else if (paddleX > target + 2) paddleX -= ARK_PADDLE_SPEED;
   if (paddleX < ARK_PADDLE_W / 2) paddleX = ARK_PADDLE_W / 2;
@@ -217,9 +257,12 @@ static void updateBallPhysics() {
     if (ballX + ARK_BALL_SIZE >= pL && ballX <= pR) {
       ballY = ARK_PADDLE_Y - ARK_BALL_SIZE;
       float hit = (ballX + ARK_BALL_SIZE / 2.0f - pL) / (float)ARK_PADDLE_W;
+      // Wider angle range: 30-150 degrees (was 30-150 but with steeper minimum)
       float angle = (150.0f - hit * 120.0f) * PI / 180.0f;
       ballVX = ARK_BALL_SPEED * cos(angle);
       ballVY = -ARK_BALL_SPEED * sin(angle);
+      // Enforce minimum horizontal speed for more natural movement
+      if (fabsf(ballVX) < 1.2f) ballVX = (ballVX >= 0) ? 1.2f : -1.2f;
       if (fabsf(ballVY) < 1.0f) ballVY = -1.5f;
     }
   }
@@ -233,8 +276,8 @@ static void updateBallPhysics() {
 static void spawnDigitFragments(int dx, int dy) {
   for (int i = 0; i < ARK_MAX_FRAGS; i++) {
     frags[i].active = true;
-    frags[i].x = dx + random(0, 24);
-    frags[i].y = dy + random(0, 32);
+    frags[i].x = dx + random(0, DIGIT_W);
+    frags[i].y = dy + random(0, DIGIT_H);
     frags[i].vx = random(-30, 30) / 10.0f;
     frags[i].vy = random(-40, -10) / 10.0f;
   }
@@ -293,9 +336,24 @@ static void applyDigitValue(int di, int dv) {
   else if (di == 4) { mo = dv; dispMin = mt * 10 + mo; }
 }
 
-// ========== Draw time digits ==========
+// ========== Draw time with Font 7 (smooth 7-segment) ==========
+// Layout: HH:MM centered horizontally
+// Each digit ~32px wide, colon ~12px, total ~148px
+
+// X positions for 5 slots: d0 d1 : d3 d4
+// Total width: 4*DIGIT_W + COLON_W = 4*32 + 12 = 140
+#define TIME_TOTAL_W  (4 * DIGIT_W + COLON_W)
+#define TIME_START_X  ((SCREEN_W - TIME_TOTAL_W) / 2)
+
+static int digitX(int i) {
+  // i: 0,1 = hour digits, 2 = colon, 3,4 = minute digits
+  if (i < 2) return TIME_START_X + i * DIGIT_W;
+  if (i == 2) return TIME_START_X + 2 * DIGIT_W;  // colon position
+  return TIME_START_X + 2 * DIGIT_W + COLON_W + (i - 3) * DIGIT_W;
+}
+
 static void drawTime() {
-  tft.setTextSize(4);
+  tft.setTextSize(1);  // no scaling, Font 7 is already 48px
   char digits[5];
   if (netSettings.use24h) {
     digits[0] = '0' + (dispHour / 10);
@@ -306,25 +364,55 @@ static void drawTime() {
     digits[0] = (h >= 10) ? '1' : ' ';
     digits[1] = '0' + (h % 10);
   }
-  digits[2] = showColon() ? ':' : ' ';
+  digits[2] = ':';
   digits[3] = '0' + (dispMin / 10);
   digits[4] = '0' + (dispMin % 10);
 
+  bool colon = showColon();
+
+  // Draw digits - only redraw changed ones
+  tft.setTextFont(7);
+  tft.setTextSize(1);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+
   for (int i = 0; i < 5; i++) {
+    if (i == 2) continue;  // skip colon slot, handled separately
+
+    int x = digitX(i);
     int y = ARK_TIME_Y + (int)digitOffsetY[i];
-    if (prevDigitY[i] != y && prevDigitY[i] != 0)
-      tft.fillRect(DIGIT_X[i], prevDigitY[i], 24, 32, TFT_BLACK);
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.setCursor(DIGIT_X[i], y);
-    tft.print(digits[i]);
-    prevDigitY[i] = y;
+    bool bouncing = (digitOffsetY[i] != 0 || digitVelocity[i] != 0);
+    bool changed = (digits[i] != prevDigits[i]) || bouncing || (prevDigitY[i] != y);
+
+    if (changed) {
+      // Clear previous and current position
+      int clearW = DIGIT_W + 2;  // +2 margin for font rendering
+      if (prevDigitY[i] != 0)
+        tft.fillRect(x, prevDigitY[i], clearW, DIGIT_H, TFT_BLACK);
+      if (prevDigitY[i] != y)
+        tft.fillRect(x, y, clearW, DIGIT_H, TFT_BLACK);
+
+      tft.drawChar(digits[i], x, y, 7);
+      prevDigits[i] = digits[i];
+      prevDigitY[i] = y;
+    }
+  }
+
+  // Colon - blinks, draw only when state changes
+  if (colon != prevColon) {
+    int cx = digitX(2);
+    tft.fillRect(cx, ARK_TIME_Y, COLON_W, DIGIT_H, TFT_BLACK);
+    if (colon) {
+      tft.drawChar(':', cx, ARK_TIME_Y, 7);
+    }
+    prevColon = colon;
   }
 
   // AM/PM for 12h mode
   if (!netSettings.use24h) {
-    tft.setTextSize(1);
+    tft.setTextFont(2);
     tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-    tft.setCursor(DIGIT_X[4] + 26, ARK_TIME_Y + 20);
+    int ampmX = digitX(4) + DIGIT_W + 2;
+    tft.setCursor(ampmX, ARK_TIME_Y + DIGIT_H - 16);
     tft.print(dispHour < 12 ? "AM" : "PM");
   }
 }
@@ -354,8 +442,12 @@ void tickPongClock() {
     lastMinute = now.tm_min;
     for (int i = 0; i < 5; i++) { prevDigitY[i] = 0; digitOffsetY[i] = 0; digitVelocity[i] = 0; }
     for (int i = 0; i < ARK_MAX_FRAGS; i++) frags[i].active = false;
+    memset(prevDigits, 0, sizeof(prevDigits));
+    prevColon = false;
     prevBallX = -1;
     prevPaddleX = paddleX;
+    // Force date redraw after fillScreen
+    prevDateStr[0] = '\0';
   }
 
   // Time management
@@ -388,8 +480,9 @@ void tickPongClock() {
       currentTarget = 0;
       breaking = true;
       int di = targetDigits[0];
-      spawnDigitFragments(DIGIT_X[di], ARK_TIME_Y);
-      tft.fillRect(DIGIT_X[di], ARK_TIME_Y, 24, 32, TFT_BLACK);
+      spawnDigitFragments(digitX(di), ARK_TIME_Y);
+      tft.fillRect(digitX(di), ARK_TIME_Y, DIGIT_W, DIGIT_H, TFT_BLACK);
+      prevDigits[di] = 0;  // force redraw
       applyDigitValue(di, targetValues[0]);
       timeOverridden = true;
       timeOverrideStart = millis();
@@ -402,8 +495,9 @@ void tickPongClock() {
     currentTarget++;
     if (currentTarget < numTargets) {
       int di = targetDigits[currentTarget];
-      spawnDigitFragments(DIGIT_X[di], ARK_TIME_Y);
-      tft.fillRect(DIGIT_X[di], ARK_TIME_Y, 24, 32, TFT_BLACK);
+      spawnDigitFragments(digitX(di), ARK_TIME_Y);
+      tft.fillRect(digitX(di), ARK_TIME_Y, DIGIT_W, DIGIT_H, TFT_BLACK);
+      prevDigits[di] = 0;  // force redraw
       applyDigitValue(di, targetValues[currentTarget]);
       triggerBounce(di);
     } else {
@@ -417,19 +511,29 @@ void tickPongClock() {
   updateBounce();
   updateFragments();
 
-  // Draw date
-  tft.setTextSize(2);
-  tft.setTextColor(TFT_CYAN, TFT_BLACK);
-  const char* days[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
-  char dateStr[20];
-  snprintf(dateStr, sizeof(dateStr), "%s %02d.%02d.%04d",
-           days[now.tm_wday], now.tm_mday, now.tm_mon + 1, now.tm_year + 1900);
-  int dateW = strlen(dateStr) * 12;  // textSize 2 = ~12px per char
-  tft.setCursor((SCREEN_W - dateW) / 2, ARK_DATE_Y);
-  tft.print(dateStr);
-
-  // Draw time, ball, paddle
-  drawTime();
+  // Draw ball and paddle first (they erase and may damage text)
   drawBall();
   drawPaddle();
+
+  // Draw text on top (repairs any ball/paddle damage via cache invalidation)
+  // Date (Font 2, smooth)
+  {
+    const char* days[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+    char dateStr[20];
+    snprintf(dateStr, sizeof(dateStr), "%s %02d.%02d.%04d",
+             days[now.tm_wday], now.tm_mday, now.tm_mon + 1, now.tm_year + 1900);
+    if (strcmp(dateStr, prevDateStr) != 0) {
+      tft.setTextFont(2);
+      tft.setTextSize(1);
+      tft.setTextDatum(TC_DATUM);
+      tft.setTextColor(TFT_CYAN, TFT_BLACK);
+      tft.fillRect(0, ARK_DATE_Y, SCREEN_W, 16, TFT_BLACK);
+      tft.drawString(dateStr, SCREEN_W / 2, ARK_DATE_Y);
+      tft.setTextDatum(TL_DATUM);
+      strlcpy(prevDateStr, dateStr, sizeof(prevDateStr));
+    }
+  }
+
+  // Time (Font 7, on top of everything)
+  drawTime();
 }

@@ -11,6 +11,9 @@
 #include <WiFiClientSecure.h>
 #include <esp_task_wdt.h>
 
+// Built-in CA certificate bundle for cloud TLS verification
+extern const uint8_t rootca_crt_bundle_start[] asm("_binary_x509_crt_bundle_start");
+
 // ── Per-connection context ──────────────────────────────────────────────────
 struct MqttConn {
   uint8_t slotIndex;
@@ -26,6 +29,7 @@ struct MqttConn {
   bool active;           // connection slot in use
   uint16_t consecutiveFails;  // for exponential backoff
   unsigned long disconnectSince;  // grace period before showing "connecting" screen
+  bool wasConnected;              // track connected->disconnected transitions for logging
 };
 
 static MqttConn conns[MAX_ACTIVE_PRINTERS];
@@ -89,8 +93,15 @@ static bool ensureClients(MqttConn& c) {
     }
     MQTT_LOG("[%d] WiFiClientSecure allocated OK", c.slotIndex);
   }
-  c.tls->setInsecure();
-  c.tls->setTimeout(5);
+  if (isCloudMode(printers[c.slotIndex].config.mode)) {
+    // Cloud: use built-in CA certificate bundle for proper TLS verification
+    c.tls->setCACertBundle(rootca_crt_bundle_start);
+    c.tls->setTimeout(15);
+  } else {
+    // LAN: printers use self-signed certs, skip verification
+    c.tls->setInsecure();
+    c.tls->setTimeout(5);
+  }
 
   if (!c.mqtt) {
     c.mqtt = new (std::nothrow) PubSubClient(*c.tls);
@@ -114,7 +125,7 @@ static bool ensureClients(MqttConn& c) {
   }
   c.mqtt->setBufferSize(BAMBU_BUFFER_SIZE);
   c.mqtt->setCallback(mqttCallback);
-  c.mqtt->setKeepAlive(BAMBU_KEEPALIVE);
+  c.mqtt->setKeepAlive(isCloudMode(cfg.mode) ? 5 : BAMBU_KEEPALIVE);
 
   return true;
 }
@@ -134,6 +145,7 @@ static void requestPushall(MqttConn& c) {
            "{\"pushing\":{\"sequence_id\":\"%u\",\"command\":\"pushall\"}}",
            c.pushallSeqId++);
 
+  MQTT_LOG("[%d] pushall -> %s", c.slotIndex, topic);
   c.mqtt->publish(topic, payload);
   c.lastPushallRequest = millis();
 }
@@ -489,7 +501,8 @@ static void reconnectConn(MqttConn& c) {
   unsigned long now = millis();
 
   // Exponential backoff: increase interval after repeated failures
-  unsigned long interval = BAMBU_RECONNECT_INTERVAL;
+  // Cloud uses longer base interval to avoid triggering broker rate limits
+  unsigned long interval = isCloudMode(cfg.mode) ? 30000 : BAMBU_RECONNECT_INTERVAL;
   if (c.consecutiveFails >= BAMBU_BACKOFF_PHASE1 + BAMBU_BACKOFF_PHASE2) {
     interval = BAMBU_BACKOFF_PHASE3_MS;
   } else if (c.consecutiveFails >= BAMBU_BACKOFF_PHASE1) {
@@ -506,6 +519,13 @@ static void reconnectConn(MqttConn& c) {
            c.slotIndex, c.diag.attempts, c.consecutiveFails, interval / 1000,
            isCloudMode(cfg.mode) ? "CLOUD" : "LOCAL");
   MQTT_LOG("[%d] serial=%s heap=%u WiFi=%d", c.slotIndex, cfg.serial, ESP.getFreeHeap(), WiFi.status());
+
+  // For cloud: force-release old TLS/MQTT objects before reconnecting.
+  // This ensures a clean TLS handshake with no stale session state.
+  if (isCloudMode(cfg.mode) && c.tls) {
+    c.tls->stop();
+    releaseClients(c);
+  }
 
   if (!ensureClients(c)) {
     MQTT_LOG("[%d] ensureClients() FAILED", c.slotIndex);
@@ -533,10 +553,17 @@ static void reconnectConn(MqttConn& c) {
     c.diag.tcpOk = true;
   }
 
-  // Unique client ID per connection slot
+  // Client ID: cloud uses random suffix (like pybambu) to avoid session
+  // collision when broker hasn't cleaned up the previous TLS session yet.
+  // LAN uses deterministic ID (stable per device).
   char clientId[32];
-  snprintf(clientId, sizeof(clientId), "bambu_%08x_%d",
-           (uint32_t)(ESP.getEfuseMac() & 0xFFFFFFFF), c.slotIndex);
+  if (isCloudMode(cfg.mode)) {
+    snprintf(clientId, sizeof(clientId), "bblp_%08x%04x",
+             (uint32_t)esp_random(), (uint16_t)(esp_random() & 0xFFFF));
+  } else {
+    snprintf(clientId, sizeof(clientId), "bambu_%08x_%d",
+             (uint32_t)(ESP.getEfuseMac() & 0xFFFFFFFF), c.slotIndex);
+  }
 
   unsigned long t0 = millis();
   esp_task_wdt_reset();
@@ -562,9 +589,18 @@ static void reconnectConn(MqttConn& c) {
     c.mqtt->subscribe(topic);
 
     printers[c.slotIndex].state.connected = true;
+    // Detect "quick disconnect" pattern: if last connection lasted < 30s,
+    // don't reset backoff — the broker may be rejecting us
+    bool quickDisconnect = c.connectTime > 0 &&
+                           (millis() - c.connectTime < 30000);
     c.connectTime = millis();
     c.initialPushallSent = false;
-    c.consecutiveFails = 0;  // reset backoff on success
+    if (!quickDisconnect) {
+      c.consecutiveFails = 0;  // only reset backoff on stable connections
+    } else {
+      MQTT_LOG("[%d] previous connection was short-lived, keeping backoff=%u",
+               c.slotIndex, c.consecutiveFails);
+    }
     c.diag.lastRc = 0;
     c.diag.connectDurMs = millis() - t0;
     MQTT_LOG("[%d] CONNECTED in %lums, subscribed to %s", c.slotIndex, c.diag.connectDurMs, topic);
@@ -595,13 +631,29 @@ static void handleConn(MqttConn& c) {
   PrinterConfig& cfg = printers[c.slotIndex].config;
   BambuState& s = printers[c.slotIndex].state;
 
-  // Call loop() FIRST so PubSubClient processes incoming data and detects
-  // broker-side disconnects before we check connected().
-  if (c.mqtt && c.mqtt->connected()) {
+  bool isConnected = c.mqtt && c.mqtt->connected();
+
+  // Detect connected->disconnected transition for diagnostics
+  if (!isConnected && c.wasConnected) {
+    int rc = c.mqtt ? c.mqtt->state() : -99;
+    unsigned long alive = c.connectTime > 0 ? millis() - c.connectTime : 0;
+    char errBuf[64] = {0};
+    int tlsErr = c.tls ? c.tls->lastError(errBuf, sizeof(errBuf)) : 0;
+    bool tlsConn = c.tls ? c.tls->connected() : false;
+    int tlsAvail = c.tls ? c.tls->available() : -1;
+    MQTT_LOG("[%d] *** DISCONNECTED rc=%d (%s) after %lums, msgs=%u pushall=%d",
+             c.slotIndex, rc, mqttRcToString(rc), alive,
+             c.diag.messagesRx, (int)c.initialPushallSent);
+    MQTT_LOG("[%d] *** TLS: connected=%d available=%d lastError=%d [%s]",
+             c.slotIndex, tlsConn, tlsAvail, tlsErr, errBuf);
+  }
+  c.wasConnected = isConnected;
+
+  if (isConnected) {
     c.mqtt->loop();
   }
 
-  if (!c.mqtt || !c.mqtt->connected()) {
+  if (!isConnected) {
     // Grace period: don't flag as disconnected until gone for 3s.
     // This prevents screen flicker on momentary cloud drops.
     if (c.disconnectSince == 0) {
@@ -615,36 +667,31 @@ static void handleConn(MqttConn& c) {
   } else {
     c.disconnectSince = 0;  // reset grace timer on healthy connection
 
-    bool cloudIdle = isCloudMode(cfg.mode) && c.idleSince > 0;
-    bool cloudPassive = cloudIdle && (millis() - c.idleSince > 600000UL);
+    // Cloud pushes data automatically — publishing to the request topic
+    // may trigger access_denied (TLS alert 49) on the cloud broker.
+    // Only request pushall for LAN connections.
+    if (!isCloudMode(cfg.mode)) {
+      if (!c.initialPushallSent && c.connectTime > 0 &&
+          millis() - c.connectTime > BAMBU_PUSHALL_INITIAL_DELAY) {
+        esp_task_wdt_reset();
+        requestPushall(c);
+        c.initialPushallSent = true;
+      }
 
-    unsigned long pushallInterval = isCloudMode(cfg.mode)
-      ? BAMBU_PUSHALL_INTERVAL * 4
-      : BAMBU_PUSHALL_INTERVAL;
-    if (cloudIdle && !cloudPassive) {
-      unsigned long idleMs = millis() - c.idleSince;
-      if (idleMs > 300000UL) pushallInterval *= 2;
-    }
+      if (c.initialPushallSent && c.diag.messagesRx == 0 &&
+          millis() - c.lastPushallRequest > 10000) {
+        MQTT_LOG("[%d] No data after pushall, retrying...", c.slotIndex);
+        esp_task_wdt_reset();
+        requestPushall(c);
+      }
 
-    if (!c.initialPushallSent && c.connectTime > 0 &&
-        millis() - c.connectTime > BAMBU_PUSHALL_INITIAL_DELAY) {
-      esp_task_wdt_reset();
-      requestPushall(c);
-      c.initialPushallSent = true;
-    }
-
-    if (c.initialPushallSent && c.diag.messagesRx == 0 &&
-        millis() - c.lastPushallRequest > 10000) {
-      MQTT_LOG("[%d] No data after pushall, retrying...", c.slotIndex);
-      esp_task_wdt_reset();
-      requestPushall(c);
-    }
-
-    if (!cloudPassive &&
-        c.initialPushallSent && c.diag.messagesRx > 0 &&
-        millis() - c.lastPushallRequest > pushallInterval) {
-      esp_task_wdt_reset();
-      requestPushall(c);
+      if (c.initialPushallSent && c.diag.messagesRx > 0 &&
+          millis() - c.lastPushallRequest > BAMBU_PUSHALL_INTERVAL) {
+        esp_task_wdt_reset();
+        requestPushall(c);
+      }
+    } else {
+      c.initialPushallSent = true;  // suppress "no data" retry logic
     }
   }
 
@@ -724,6 +771,7 @@ void initBambuMqtt() {
     c.idleSince = 0;
     c.consecutiveFails = 0;
     c.disconnectSince = 0;
+    c.wasConnected = false;
 
     BambuState& s = printers[i].state;
     memset(&s, 0, sizeof(BambuState));

@@ -34,6 +34,15 @@
 - **Default background color** - changed from dark navy (0x0861) to black (0x0000)
 - **Multi-printer no longer beta** - removed BETA tag from multi-printer support
 
+## Pong clock overhaul
+
+- **Smooth fonts** - replaced pixelated GLCD+setTextSize with Font 7 (7-segment, 48px) for time and Font 2 for date - much cleaner look
+- **Date no longer overlaps bricks** - repositioned date and brick rows to avoid collision
+- **Colon centered** - colon properly centered between hour and minute digits, blinks cleanly
+- **No more flickering digits** - digits only redraw when their value changes or during bounce animation, date redraws once per day
+- **Better paddle AI** - paddle predicts ball landing position instead of tracking ball X directly; stays put when ball goes up instead of drifting to center
+- **More natural ball movement** - enforced minimum horizontal speed (1.2) after paddle bounce to prevent near-vertical trajectories
+
 ## Display fixes
 
 - **Pong clock text size bug** - switching from Pong clock to printer dashboard no longer shows garbled oversized text (tft.setTextSize was not reset)
