@@ -11,6 +11,7 @@ Usage:
 import argparse
 import os
 import sys
+Import("env")
 
 BUILD_DIR = '.pio/build/rak3312'
 BOOTLOADER = os.path.join(BUILD_DIR, 'bootloader.bin')
@@ -44,6 +45,8 @@ def create_ota_binary():
 
 
 def merge_binaries():
+    fw_name = f'BambuHelper-WebFlasher-RAK3312-v{version_tag_1}.{version_tag_2}.bin'
+    OUTPUT_MERGED = os.path.join(OUTPUT_DIR, fw_name)
     """Merge bootloader + partitions + firmware into a single flashable binary."""
     for path in [BOOTLOADER, PARTITIONS, FIRMWARE]:
         if not os.path.exists(path):
@@ -89,10 +92,30 @@ def merge_binaries():
     return True
 
 
-if __name__ == '__main__':
+def create_merged(source, target, env):
+    # print("======================")
+    # print("start merge request")
+    # print("======================")
+
     parser = argparse.ArgumentParser(description='Create flashable BambuHelper firmware')
     parser.add_argument('--ota', action='store_true', help='Create OTA-only binary')
-    args = parser.parse_args()
 
-    success = create_ota_binary() if args.ota else merge_binaries()
+    success = merge_binaries()
     sys.exit(0 if success else 1)
+
+def get_build_flag_value(flag_name):
+    build_flags = env.ParseFlags(env['BUILD_FLAGS'])
+    flags_with_value_list = [build_flag for build_flag in build_flags.get('CPPDEFINES') if type(build_flag) == list]
+    defines = {k: v for (k, v) in flags_with_value_list}
+    return defines.get(flag_name)
+
+# Add callback after .hex file was created
+env.AddPostAction("$BUILD_DIR/firmware.bin", create_merged)
+
+# Get version numbers
+version_tag_1 = get_build_flag_value("SW_VERSION_1")
+version_tag_2 = get_build_flag_value("SW_VERSION_2")
+# print("======================")
+# print(f"FW version v{version_tag_1}.{version_tag_2}")
+# print("enqueued merge request")
+# print("======================")
