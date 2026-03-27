@@ -88,8 +88,7 @@ void setBacklight(uint8_t level) {
 //  Init
 // ---------------------------------------------------------------------------
 void initDisplay() {
-  if ((dispSettings.rotation == 1) || (dispSettings.rotation == 3))
-  {
+  if ((dispSettings.rotation == 1) || (dispSettings.rotation == 3)) {
     use_width = SCREEN_H;
     use_height = SCREEN_W;
   } else {
@@ -130,13 +129,10 @@ void initDisplay() {
 void applyDisplaySettings() {
   tft.setRotation(dispSettings.rotation);
   tft.fillScreen(dispSettings.bgColor);
-  if ((dispSettings.rotation == 1) || (dispSettings.rotation == 3))
-  {
+  if ((dispSettings.rotation == 1) || (dispSettings.rotation == 3)) {
     use_width = SCREEN_H;
     use_height = SCREEN_W;
-  }
-  else
-  {
+  } else {
     use_width = SCREEN_W;
     use_height = SCREEN_H;
   }
@@ -266,8 +262,8 @@ static void drawWiFiConnected() {
   tft.fillCircle(cx, cy, 25, CLR_GREEN);
   // Draw thick tick mark (3px wide)
   for (int i = -1; i <= 1; i++) {
-    tft.drawLine(cx - 12, cy + i,     cx - 4, cy + 8 + i, CLR_BG);  // short leg
-    tft.drawLine(cx - 4,  cy + 8 + i, cx + 12, cy - 6 + i, CLR_BG); // long leg
+    tft.drawLine(cx - 12, cy + i, cx - 4, cy + 8 + i, CLR_BG);     // short leg
+    tft.drawLine(cx - 4, cy + 8 + i, cx + 12, cy - 6 + i, CLR_BG); // long leg
   }
 
   tft.setTextColor(CLR_GREEN, CLR_BG);
@@ -441,7 +437,7 @@ static void drawIdle() {
     drawTempGauge(tft, use_width / 2 - 55, use_height / 2 + 20, 30,
                   s.nozzleTemp, s.nozzleTarget, 300.0f,
                   dispSettings.nozzle.arc, nozzleLabel(s), nullptr, forceRedraw,
-                  &dispSettings.nozzle, smoothNozzleTemp);  // 140
+                  &dispSettings.nozzle, smoothNozzleTemp); // 140
 
     // Bed temp gauge
     drawTempGauge(tft, use_width / 2 + 55, use_height / 2 + 20, 30,
@@ -465,9 +461,9 @@ static void drawIdle() {
       tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
       tft.drawString(t.type, use_width / 2 + 4, use_height - 2);
     } else {
-    tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
-    char wifiBuf[24];
-    snprintf(wifiBuf, sizeof(wifiBuf), "WiFi: %d dBm", s.wifiSignal);
+      tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
+      char wifiBuf[24];
+      snprintf(wifiBuf, sizeof(wifiBuf), "WiFi: %d dBm", s.wifiSignal);
       tft.drawString(wifiBuf, use_width / 2, use_height - 2);
     }
   }
@@ -509,13 +505,13 @@ static void drawPrinting() {
                       (strcmp(s.gcodeState, prevState.gcodeState) != 0);
 
   // 2x3 gauge grid constants
-  const int16_t gR = 32;       // radius for all gauges
-  const int16_t gT = 6;        // thickness for progress arc
-  const int16_t col1 = (use_width / 2) - (use_width / 3);     // 42 left column center X
-  const int16_t col2 = use_width / 2;    // 120 middle column center X
+  const int16_t gR = 32;                                  // radius for all gauges
+  const int16_t gT = 6;                                   // thickness for progress arc
+  const int16_t col1 = (use_width / 2) - (use_width / 3); // 42 left column center X
+  const int16_t col2 = use_width / 2;                     // 120 middle column center X
   const int16_t col3 = (use_width / 2) + (use_width / 3); // 198 right column center X
-  const int16_t row1Y = use_height / 4;            // 60 row 1 center Y (progress, nozzle, bed)
-  const int16_t row2Y = use_height / 2 + 28;   // 148 row 2 center Y (part fan, aux fan, chamb fan)
+  const int16_t row1Y = use_height / 4;                   // 60 row 1 center Y (progress, nozzle, bed)
+  const int16_t row2Y = use_height / 2 + 28;              // 148 row 2 center Y (part fan, aux fan, chamb fan)
 
   // === H2-style LED progress bar (y=0-5) ===
   if (progChanged) {
@@ -685,18 +681,18 @@ static void drawPrinting() {
       if (t.present) {
         tft.drawCircle(10, use_height - 8, 5, CLR_TEXT_DARK); // 232
         tft.fillCircle(10, use_height - 8, 4, t.colorRgb565); // 232
-    tft.setTextDatum(ML_DATUM);
-    tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
-    tft.drawString(t.type, 19, use_height - 8); // 232
+        tft.setTextDatum(ML_DATUM);
+        tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
+        tft.drawString(t.type, 19, use_height - 8); // 232
       } else {
         drawWifiSignalIndicator(s);
       }
     } else if (s.ams.vtPresent && s.ams.activeTray == 254) {
-        tft.drawCircle(10, use_height - 8, 5, CLR_TEXT_DARK); // 232
-        tft.fillCircle(10, use_height - 8, 4, s.ams.vtColorRgb565); // 232
-        tft.setTextDatum(ML_DATUM);
-        tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
-        tft.drawString(s.ams.vtType, 19, use_height - 8); // 232
+      tft.drawCircle(10, use_height - 8, 5, CLR_TEXT_DARK);       // 232
+      tft.fillCircle(10, use_height - 8, 4, s.ams.vtColorRgb565); // 232
+      tft.setTextDatum(ML_DATUM);
+      tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
+      tft.drawString(s.ams.vtType, 19, use_height - 8); // 232
     } else {
       drawWifiSignalIndicator(s);
     }
@@ -730,9 +726,9 @@ static void drawFinished() {
                      (s.bedTarget != prevState.bedTarget);
 
   const int16_t gR = 32;
-  const int16_t gaugeLeft  = use_width / 3;   // 72 two gauges centered on 240px
-  const int16_t gaugeRight = use_width / 3 * 2; // 168 
-  const int16_t gaugeY = use_height / 3; // 80
+  const int16_t gaugeLeft = use_width / 3;      // 72 two gauges centered on 240px
+  const int16_t gaugeRight = use_width / 3 * 2; // 168
+  const int16_t gaugeY = use_height / 3;        // 80
 
   // === H2-style LED progress bar at 100% (y=0-5) ===
   if (forceRedraw) {
@@ -853,49 +849,51 @@ void updateDisplay() {
   }
 
   switch (currentScreen) {
-    case SCREEN_SPLASH:
-      // Splash shown in initDisplay(), auto-advance handled by main.cpp
-      break;
+  case SCREEN_SPLASH:
+    // Splash shown in initDisplay(), auto-advance handled by main.cpp
+    break;
 
-    case SCREEN_AP_MODE:
+  case SCREEN_AP_MODE:
       if (forceRedraw) drawAPMode();
-      break;
+    break;
 
-    case SCREEN_CONNECTING_WIFI:
-      drawConnectingWiFi();
-      break;
+  case SCREEN_CONNECTING_WIFI:
+    drawConnectingWiFi();
+    break;
 
-    case SCREEN_WIFI_CONNECTED:
-      drawWiFiConnected();
-      break;
+  case SCREEN_WIFI_CONNECTED:
+    drawWiFiConnected();
+    break;
 
-    case SCREEN_CONNECTING_MQTT:
-      drawConnectingMQTT();
-      break;
+  case SCREEN_CONNECTING_MQTT:
+    drawConnectingMQTT();
+    break;
 
-    case SCREEN_IDLE:
-      drawIdle();
-      break;
+  case SCREEN_IDLE:
+    drawIdle();
+    break;
 
-    case SCREEN_PRINTING:
-      drawPrinting();
-      break;
+  case SCREEN_PRINTING:
+    drawPrinting();
+    break;
 
-    case SCREEN_FINISHED:
-      drawFinished();
-      break;
+  case SCREEN_FINISHED:
+    drawFinished();
+    break;
 
-    case SCREEN_CLOCK:
+  case SCREEN_CLOCK:
       if (!dispSettings.pongClock) drawClock();
-      // Pong clock is ticked before the throttle (above)
-      break;
+    // Pong clock is ticked before the throttle (above)
+    break;
 
-    case SCREEN_OFF:
-      if (forceRedraw) {
-        tft.fillScreen(TFT_BLACK);
-        setBacklight(0);
+  case SCREEN_OFF:
+    if (Serial.isPlugged()) drawClock();
+    else if (forceRedraw){
+      tft.fillScreen(TFT_BLACK);
+      setBacklight(0);
       }
-      break;
+    }
+    break;
   }
 
   // Save state for next smart-redraw comparison

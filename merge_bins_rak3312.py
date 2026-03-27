@@ -101,7 +101,7 @@ def create_merged(source, target, env):
     parser.add_argument('--ota', action='store_true', help='Create OTA-only binary')
 
     success = merge_binaries()
-    sys.exit(0 if success else 1)
+    # sys.exit(0 if success else 1)
 
 def get_build_flag_value(flag_name):
     build_flags = env.ParseFlags(env['BUILD_FLAGS'])

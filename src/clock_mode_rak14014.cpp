@@ -1,4 +1,4 @@
-#ifndef _VARIANT_RAK3112_
+#ifdef _VARIANT_RAK3112_
 #include "clock_mode.h"
 #include "display_ui.h"
 #include "settings.h"
@@ -6,6 +6,10 @@
 #include <time.h>
 
 static int prevMinute = -1;
+
+// Screen width and height changes depending on rotation
+extern int32_t use_width;
+extern int32_t use_height;
 
 void resetClock() {
   prevMinute = -1;
@@ -22,7 +26,7 @@ void drawClock() {
   uint16_t bg = dispSettings.bgColor;
 
   // Clear clock area
-  tft.fillRect(0, 50, 240, 140, bg);
+  tft.fillRect(0, 50, use_width, 140, bg); // 240
 
   // Time — large 7-segment font
   char timeBuf[12];
@@ -36,13 +40,13 @@ void drawClock() {
   tft.setTextDatum(MC_DATUM);
   tft.setTextFont(7);
   tft.setTextColor(CLR_TEXT, bg);
-  tft.drawString(timeBuf, 120, 100);
+  tft.drawString(timeBuf, use_width / 2, 100); // 120
 
   // AM/PM indicator for 12h mode
   if (!netSettings.use24h) {
     tft.setTextFont(4);
     tft.setTextColor(CLR_TEXT_DIM, bg);
-    tft.drawString(now.tm_hour < 12 ? "AM" : "PM", 120, 135);
+	tft.drawString(now.tm_hour < 12 ? "AM" : "PM", use_width / 2, 135); // 120
   }
 
   // Date — smaller font below
@@ -52,7 +56,7 @@ void drawClock() {
            days[now.tm_wday], now.tm_mday, now.tm_mon + 1, now.tm_year + 1900);
   tft.setTextFont(4);
   tft.setTextColor(CLR_TEXT_DIM, bg);
-  tft.drawString(dateBuf, 120, 155);
+  tft.drawString(dateBuf, use_width / 2, 155); // 120
 }
 
 #endif
