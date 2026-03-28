@@ -47,6 +47,14 @@
 - Printers without a door sensor ignore this setting and use normal timeout behavior
 - Door sensor state parsed from MQTT `stat` field (hex, bit 0x00800000)
 
+## Smoother gauge animations
+
+- **Adaptive frame rate for arc gauges** - gauge arcs now animate at ~12 FPS during value transitions (up from 4 FPS), then drop back to the normal refresh rate once settled. Interpolation step size adjusted to match, producing visibly smoother temperature and fan gauge sweeps with no extra CPU cost at idle
+
+## WiFi connection retry
+
+- **Retry on boot** - WiFi connection now retries up to 3 times (15s each) before falling back to AP mode, improving reliability on networks that are slow to respond or temporarily busy
+
 ## Bug fixes
 
 - **MQTT parser buffer overread** - `deserializeJson()` for extruder and vt_tray sections was called without a length limit, allowing reads past the MQTT payload buffer. Now bounded by payload size.

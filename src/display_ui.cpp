@@ -41,7 +41,10 @@ static float smoothAuxFan     = 0;
 static float smoothChamberFan = 0;
 static bool  smoothInited     = false;
 
-static const float SMOOTH_ALPHA = 0.25f;  // per frame at 4Hz — ~1s to settle
+static bool gaugesAnimating = false;       // true while arcs are interpolating
+static const unsigned long GAUGE_ANIM_MS = 80; // ~12 Hz during animation
+
+static const float SMOOTH_ALPHA = 0.09f;  // per frame at 12Hz — ~1s to settle
 static const float SNAP_THRESH  = 0.5f;   // snap when within 0.5 of target
 
 static void smoothLerp(float& cur, float target) {
@@ -404,6 +407,7 @@ static void drawIdle() {
   const int16_t cx = scrW / 2;
 
   bool animating = tickGaugeSmooth(s, forceRedraw);
+  gaugesAnimating = animating;
   bool stateChanged = forceRedraw || (strcmp(s.gcodeState, prevState.gcodeState) != 0);
   bool tempChanged = forceRedraw || animating ||
                      (s.nozzleTemp != prevState.nozzleTemp) ||
@@ -662,11 +666,12 @@ static void drawExtraGauges(const BambuState& s, bool landscape, bool force) {
   }
 
   // Change detection
-  bool changed = force ||
+  bool extraAnim = (fabsf(smoothExtraChamber - s.chamberTemp) > 0.01f) ||
+                   (fabsf(smoothExtraHeatbreak - (float)s.heatbreakFanPct) > 0.01f);
+  gaugesAnimating = gaugesAnimating || extraAnim;
+  bool changed = force || extraAnim ||
     (s.chamberTemp != prevState.chamberTemp) ||
-    (s.heatbreakFanPct != prevState.heatbreakFanPct) ||
-    (fabsf(smoothExtraChamber - s.chamberTemp) > 0.5f) ||
-    (fabsf(smoothExtraHeatbreak - (float)s.heatbreakFanPct) > 0.5f);
+    (s.heatbreakFanPct != prevState.heatbreakFanPct);
   if (!changed) return;
 
   if (landscape) {
@@ -721,6 +726,7 @@ static void drawPrinting() {
   BambuState& s = p.state;
 
   bool animating = tickGaugeSmooth(s, forceRedraw);
+  gaugesAnimating = animating;
   bool progChanged = forceRedraw || (s.progress != prevState.progress);
   bool tempChanged = forceRedraw || animating ||
                      (s.nozzleTemp != prevState.nozzleTemp) ||
@@ -1176,7 +1182,8 @@ void updateDisplay() {
   }
 
   unsigned long now = millis();
-  if (now - lastDisplayUpdate < DISPLAY_UPDATE_MS) return;
+  unsigned long interval = gaugesAnimating ? GAUGE_ANIM_MS : DISPLAY_UPDATE_MS;
+  if (now - lastDisplayUpdate < interval) return;
   lastDisplayUpdate = now;
 
   // Detect screen change
