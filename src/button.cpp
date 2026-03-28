@@ -25,21 +25,23 @@ static void keyIntHandle(void)
 
 void initButton()
 {
-#ifdef _VARIANT_RAK3112_
-// RAK14014 touch screen
+#ifdef _VARIANT_RAK3112_ 
+#ifndef _RAK1921_
+  // RAK14014 touch screen
   ft6336u.begin();
   attachInterrupt(digitalPinToInterrupt(WB_IO6), keyIntHandle, FALLING);
   BTN_LOG("BTN initialized");
   buttonType = BTN_PUSH;
   return;
-#else
+#endif
+#endif
   if (buttonType == BTN_DISABLED || buttonPin == 0)return;
   if (buttonType == BTN_PUSH) {
     pinMode(buttonPin, INPUT_PULLUP);
   } else {  // BTN_TOUCH (TTP223)
     pinMode(buttonPin, INPUT);
   }
-#endif
+
   lastRaw = false;
   stableState = false;
   lastChangeMs = 0;

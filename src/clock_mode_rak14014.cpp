@@ -1,4 +1,5 @@
 #ifdef _VARIANT_RAK3112_
+#ifndef _RAK1921_
 #include "clock_mode.h"
 #include "display_ui.h"
 #include "settings.h"
@@ -59,4 +60,5 @@ void drawClock() {
   tft.drawString(dateBuf, use_width / 2, 155); // 120
 }
 
+#endif
 #endif
