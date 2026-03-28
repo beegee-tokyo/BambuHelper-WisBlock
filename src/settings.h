@@ -52,6 +52,8 @@ struct DisplayPowerSettings {
   uint8_t nightStartHour;      // dim start hour (0-23)
   uint8_t nightEndHour;        // dim end hour (0-23)
   uint8_t nightBrightness;     // brightness during night (0-255)
+  // Screensaver dimming (idle/clock screen)
+  uint8_t screensaverBrightness; // brightness when clock/screensaver is active (0-255)
 };
 
 // Button type

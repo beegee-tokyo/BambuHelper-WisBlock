@@ -284,8 +284,14 @@ static const char PAGE_HTML[] PROGMEM = R"rawliteral(
         <label for="keepon">Keep display always on (override timeout)</label>
       </div>
       <div class="check-row">
-        <input type="checkbox" id="clock" value="1" %CLOCK% onchange="toggleSetting('clock',this.checked)">
+        <input type="checkbox" id="clock" value="1" %CLOCK%>
         <label for="clock">Show clock after print (instead of screen off)</label>
+      </div>
+      <div id="ssbrightWrap" style="display:%CLOCKDISP%">
+        <label for="ssbright" style="margin-top:12px;font-size:12px">Screensaver brightness: <span id="ssbrightVal">%SSBRIGHT%</span></label>
+        <input type="range" id="ssbright" min="0" max="255" step="5" value="%SSBRIGHT%"
+               oninput="document.getElementById('ssbrightVal').textContent=this.value;fetch('/brightness?val='+this.value)">
+        <p style="font-size:11px;color:#8B949E;margin-top:4px">Brightness when clock/screensaver is active. Set to 0 to turn off backlight.</p>
       </div>
       <div class="check-row">
         <input type="checkbox" id="dack" value="1" %DACK% onchange="toggleSetting('dack',this.checked)">
@@ -762,6 +768,7 @@ function applyDisplay(){
   p.append('nstart',document.getElementById('nstart').value);
   p.append('nend',document.getElementById('nend').value);
   p.append('nbright',document.getElementById('nbright').value);
+  p.append('ssbright',document.getElementById('ssbright').value);
   p.append('rotation',document.getElementById('rotation').value);
   p.append('fmins',document.getElementById('fmins').value);
   if(document.getElementById('keepon').checked) p.append('keepon','1');
@@ -931,11 +938,13 @@ function startOta(){
   var clk=document.getElementById('clock');
   var pong=document.getElementById('pong');
   var row=document.getElementById('pong-row');
+  var ssw=document.getElementById('ssbrightWrap');
   function upd(){
     pong.disabled=!clk.checked;
     row.style.opacity=clk.checked?'1':'0.4';
+    if(ssw) ssw.style.display=clk.checked?'block':'none';
   }
-  clk.onchange=upd;
+  clk.addEventListener('change',function(){toggleSetting('clock',clk.checked);upd();});
   upd();
 })();
 </script>
@@ -995,6 +1004,7 @@ static void processTemplate(String& page) {
   page.replace("%NIGHTEN%", dpSettings.nightModeEnabled ? "checked" : "");
   page.replace("%NIGHTDISP%", dpSettings.nightModeEnabled ? "block" : "none");
   page.replace("%NBRIGHT%", String(dpSettings.nightBrightness));
+  page.replace("%SSBRIGHT%", String(dpSettings.screensaverBrightness));
   {
     String startOpts, endOpts;
     for (uint8_t h = 0; h < 24; h++) {
@@ -1047,6 +1057,7 @@ static void processTemplate(String& page) {
   // Display power
   page.replace("%FMINS%", String(dpSettings.finishDisplayMins));
   page.replace("%KEEPON%", dpSettings.keepDisplayOn ? "checked" : "");
+  page.replace("%CLOCKDISP%", dpSettings.showClockAfterFinish ? "block" : "none");
   page.replace("%CLOCK%", dpSettings.showClockAfterFinish ? "checked" : "");
   page.replace("%DACK%", dpSettings.doorAckEnabled ? "checked" : "");
   page.replace("%ABAR%", dispSettings.animatedBar ? "checked" : "");
@@ -1135,6 +1146,7 @@ static void readDisplayFromForm() {
   if (server.hasArg("nstart")) dpSettings.nightStartHour = server.arg("nstart").toInt();
   if (server.hasArg("nend"))   dpSettings.nightEndHour = server.arg("nend").toInt();
   if (server.hasArg("nbright")) dpSettings.nightBrightness = server.arg("nbright").toInt();
+  if (server.hasArg("ssbright")) dpSettings.screensaverBrightness = server.arg("ssbright").toInt();
 
   if (server.hasArg("rotation")) {
     uint8_t rot = server.arg("rotation").toInt();
@@ -1545,6 +1557,7 @@ static void handleSettingsExport() {
   dp["nightStartHour"] = dpSettings.nightStartHour;
   dp["nightEndHour"] = dpSettings.nightEndHour;
   dp["nightBrightness"] = dpSettings.nightBrightness;
+  dp["screensaverBrightness"] = dpSettings.screensaverBrightness;
 
   // Network
   JsonObject net = doc["network"].to<JsonObject>();
@@ -1677,6 +1690,7 @@ static void handleSettingsImportFinish() {
     if (dp["nightStartHour"].is<uint8_t>())     dpSettings.nightStartHour = dp["nightStartHour"].as<uint8_t>();
     if (dp["nightEndHour"].is<uint8_t>())       dpSettings.nightEndHour = dp["nightEndHour"].as<uint8_t>();
     if (dp["nightBrightness"].is<uint8_t>())    dpSettings.nightBrightness = dp["nightBrightness"].as<uint8_t>();
+    if (dp["screensaverBrightness"].is<uint8_t>()) dpSettings.screensaverBrightness = dp["screensaverBrightness"].as<uint8_t>();
   }
 
   // Network

@@ -1172,6 +1172,13 @@ static bool isNightHour() {
 }
 
 uint8_t getEffectiveBrightness() {
+  if (currentScreen == SCREEN_CLOCK) {
+    // During night hours, use the dimmer of the two
+    if (dpSettings.nightModeEnabled && isNightHour()) {
+      return min(dpSettings.screensaverBrightness, dpSettings.nightBrightness);
+    }
+    return dpSettings.screensaverBrightness;
+  }
   if (dpSettings.nightModeEnabled && isNightHour()) {
     return dpSettings.nightBrightness;
   }
@@ -1215,8 +1222,9 @@ void updateDisplay() {
 
   // Detect screen change
   if (currentScreen != prevScreen) {
-    // Restore backlight when leaving SCREEN_OFF
-    if (prevScreen == SCREEN_OFF && currentScreen != SCREEN_OFF) {
+    // Restore backlight when leaving SCREEN_OFF or SCREEN_CLOCK
+    if ((prevScreen == SCREEN_OFF || prevScreen == SCREEN_CLOCK) &&
+        currentScreen != SCREEN_OFF && currentScreen != SCREEN_CLOCK) {
       setBacklight(getEffectiveBrightness());
     }
     // Reset text size in case Pong clock left it scaled up
@@ -1229,6 +1237,7 @@ void updateDisplay() {
     if (currentScreen == SCREEN_CLOCK) {
       if (dispSettings.pongClock) resetPongClock();
       else resetClock();
+      setBacklight(getEffectiveBrightness());  // dim for screensaver
     }
     prevScreen = currentScreen;
   }
