@@ -201,6 +201,7 @@ void loadSettings() {
   dispSettings.pongClock = prefs.getBool("dsp_pong", def.pongClock);
   dispSettings.smallLabels = prefs.getBool("dsp_slbl", def.smallLabels);
   dispSettings.cydExtraMode = prefs.getUChar("dsp_cydex", 0);
+  dispSettings.cydExtraMode = 0;  // temporary: force AMS-only on CYD
 
   loadGaugeColors("gc_prg", dispSettings.progress, def.progress);
   loadGaugeColors("gc_noz", dispSettings.nozzle, def.nozzle);

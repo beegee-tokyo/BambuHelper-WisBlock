@@ -307,6 +307,7 @@ static const char PAGE_HTML[] PROGMEM = R"rawliteral(
         Note: Without a physical button, display will show clock instead of turning off (no way to wake manually).
       </div>
 
+      <!--
       <div id="cydextra-section" style="display:%CYDEXVIS%">
         <label for="cydextra" style="margin-top:12px">CYD Extra Area</label>
         <select id="cydextra">
@@ -314,6 +315,7 @@ static const char PAGE_HTML[] PROGMEM = R"rawliteral(
           <option value="1" %CYDEX1%>Extra Gauges (Chamber + Heatbreak Fan)</option>
         </select>
       </div>
+      -->
 
       <div style="margin-top:16px;padding-top:12px;border-top:1px solid #30363D">
         <h3 style="color:#58A6FF;font-size:14px;margin-bottom:10px">Clock Settings</h3>
@@ -1051,12 +1053,8 @@ static void processTemplate(String& page) {
   page.replace("%PONG%", dispSettings.pongClock ? "checked" : "");
   page.replace("%SLBL%", dispSettings.smallLabels ? "checked" : "");
 
-  // CYD extra area mode (hidden on 240x240 builds)
-#if defined(DISPLAY_CYD)
-  page.replace("%CYDEXVIS%", "block");
-#else
+  // CYD extra area mode temporarily hidden until the alternate view is redesigned
   page.replace("%CYDEXVIS%", "none");
-#endif
   page.replace("%CYDEX0%", dispSettings.cydExtraMode == 0 ? "selected" : "");
   page.replace("%CYDEX1%", dispSettings.cydExtraMode == 1 ? "selected" : "");
 
