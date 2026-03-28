@@ -30,6 +30,12 @@ When using Bambu Cloud, BambuHelper connects through Bambu Lab's cloud MQTT serv
 |---|---|---|
 | ![Dashboard](img/interface1.jpg) | ![Settings](img/screen1.png) | ![Gauge Colors](img/screen2.png) |
 
+## CYD Display Support (Beta)
+
+| Preview | Notes |
+|---|---|
+| ![CYD display](img/CYD.png) | **CYD / ESP32-2432S028** support is available and currently **beta**. This is the larger `320x240` display version. Flashing is done the same way as the standard `240x240` build, but on [ESP Web Flasher](https://espressif.github.io/esptool-js/) you should set **Baudrate: 115200** before clicking **Connect**. This low baudrate note is for **CYD only**. The standard ESP32-S3 240x240 version does not require this change. Tested behavior so far: CYD flashing works reliably only at the lowest speed. |
+
 ## Features
 
 - **Live dashboard** - progress arc, temperature gauges, fan speed, layer count, time remaining
@@ -105,12 +111,6 @@ You can change the buzzer GPIO later in the web interface under **Buzzer**. The 
 ### Assembly Video
 
 [![Assembly Video](https://img.youtube.com/vi/hsyamsU5UZE/maxresdefault.jpg)](https://youtu.be/hsyamsU5UZE)
-
-## CYD Display Support (Beta)
-
-| Preview | Notes |
-|---|---|
-| ![CYD display](img/CYD.png) | **CYD / ESP32-2432S028** support is available and currently **beta**. This is the larger `320x240` display version. Flashing is done the same way as the standard `240x240` build, but on [ESP Web Flasher](https://espressif.github.io/esptool-js/) you should set **Baudrate: 115200** before clicking **Connect**. This low baudrate note is for **CYD only**. The standard ESP32-S3 240x240 version does not require this change. Tested behavior so far: CYD flashing works reliably only at the lowest speed. |
 
 ## Flashing
 
