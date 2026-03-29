@@ -181,6 +181,10 @@ void loop() {
     } else if (s.connected && !s.printing &&
                strcmp(s.gcodeState, "FINISH") == 0) {
       if (current != SCREEN_FINISHED && current != SCREEN_OFF && current != SCREEN_CLOCK) {
+        if (tasmotaSettings.enabled &&
+            (tasmotaSettings.assignedSlot == 255 ||
+             tasmotaSettings.assignedSlot == rotState.displayIndex))
+          tasmotaMarkPrintEnd();
         setScreenState(SCREEN_FINISHED);
         finishScreenStart = millis();
         if (!s.finishBuzzerPlayed) {

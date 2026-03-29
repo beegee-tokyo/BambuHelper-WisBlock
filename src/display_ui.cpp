@@ -1213,10 +1213,7 @@ static void drawFinished() {
       if (kwh >= 0.0f) {
         drawIcon16(tft, cx - 32, kwhY - 8, icon_lightning, CLR_YELLOW);
         char kwhBuf[16];
-        if (kwh < 0.1f)
-          snprintf(kwhBuf, sizeof(kwhBuf), "%.0f Wh", kwh * 1000.0f);
-        else
-          snprintf(kwhBuf, sizeof(kwhBuf), "%.3f kWh", kwh);
+        snprintf(kwhBuf, sizeof(kwhBuf), "%.3f kWh", kwh);
         tft.setTextDatum(ML_DATUM);
         tft.setTextFont(2);
         tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
