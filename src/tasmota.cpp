@@ -1,35 +1,27 @@
 #include "tasmota.h"
 #include "settings.h"
+#include "wifi_manager.h"
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
-#define TASMOTA_TIMEOUT_MS       3000      // HTTP timeout when plug is known-online
-#define TASMOTA_TIMEOUT_FAST_MS   200      // HTTP timeout when plug is offline - fail fast
-#define TASMOTA_STALE_MS        90000UL   // consider offline after 90s without data
-#define TASMOTA_NORMAL_INTERVAL_MS 30000UL // poll every 30s when online
-#define TASMOTA_OFFLINE_RETRY_MS   60000UL // retry every 60s when offline
+#define TASMOTA_TIMEOUT_MS        1500      // HTTP timeout when plug is known-online
+#define TASMOTA_TIMEOUT_FAST_MS    200      // HTTP timeout when plug is offline - fail fast
+#define TASMOTA_STALE_MS         90000UL   // consider offline after 90s without data
+#define TASMOTA_OFFLINE_RETRY_MS  60000UL  // retry every 60s when offline
+#define TASMOTA_DEFAULT_INTERVAL   10      // seconds, used when pollInterval not set
 
-static float    g_watts              = -1.0f;
-static float    g_todayKwh           = -1.0f;  // kWh today from Tasmota
-static float    g_yesterdayKwh       = -1.0f;  // kWh yesterday from Tasmota
-static float    g_printStartTodayKwh = -1.0f;  // Today at print start
-static float    g_printUsedKwh       = -1.0f;  // frozen session kWh at print end
-static uint32_t g_lastUpdateMs       = 0;
-static uint32_t g_nextPollMs         = 0;
-static bool     g_kwhChanged         = false;
-static bool     g_plugOffline        = false;   // true after failed poll; triggers fast-fail + 60s retry
+static volatile float    g_watts              = -1.0f;
+static volatile float    g_todayKwh           = -1.0f;
+static volatile float    g_yesterdayKwh       = -1.0f;
+static volatile float    g_printStartTodayKwh = -1.0f;
+static volatile float    g_printUsedKwh       = -1.0f;
+static volatile uint32_t g_lastUpdateMs       = 0;
+static volatile bool     g_kwhChanged         = false;
+static volatile bool     g_plugOffline        = false;
 
-void tasmotaInit() {
-  g_watts              = -1.0f;
-  g_todayKwh           = -1.0f;
-  g_yesterdayKwh       = -1.0f;
-  g_printStartTodayKwh = -1.0f;
-  g_printUsedKwh       = -1.0f;
-  g_lastUpdateMs       = 0;
-  g_nextPollMs         = 0;
-  g_kwhChanged         = false;
-  g_plugOffline        = false;
-}
+static TaskHandle_t g_taskHandle = NULL;
 
 static void doPoll() {
   if (!tasmotaSettings.enabled || tasmotaSettings.ip[0] == '\0') return;
@@ -79,32 +71,56 @@ static void doPoll() {
     return;
   }
 
-  g_watts        = power.as<float>();
+  float newWatts = power.as<float>();
+  float newToday = today.isNull()     ? -1.0f : today.as<float>();
+  float newYest  = yesterday.isNull() ? -1.0f : yesterday.as<float>();
+
+  g_watts        = newWatts;
   g_lastUpdateMs = millis();
   g_plugOffline  = false;
 
-  if (!today.isNull()) {
-    float newToday = today.as<float>();
-    if (newToday != g_todayKwh) {
-      g_todayKwh   = newToday;
-      g_kwhChanged = true;
-    }
+  if (newToday >= 0.0f && newToday != (float)g_todayKwh) {
+    g_todayKwh   = newToday;
+    g_kwhChanged = true;
   }
-
-  if (!yesterday.isNull()) {
-    g_yesterdayKwh = yesterday.as<float>();
-  }
+  if (newYest >= 0.0f) g_yesterdayKwh = newYest;
 
   Serial.printf("[Tasmota] Power=%.0fW, Today=%.3fkWh, Yesterday=%.3fkWh\n",
-                g_watts, g_todayKwh, g_yesterdayKwh);
+                newWatts, newToday, newYest);
 }
 
-void tasmotaLoop(unsigned long now) {
-  if (!tasmotaSettings.enabled) return;
-  if ((uint32_t)now >= g_nextPollMs) {
-    doPoll();
-    uint32_t intervalMs = g_plugOffline ? TASMOTA_OFFLINE_RETRY_MS : TASMOTA_NORMAL_INTERVAL_MS;
-    g_nextPollMs = (uint32_t)now + intervalMs;
+static void pollTask(void *) {
+  while (true) {
+    if (isWiFiConnected()) {
+      doPoll();
+    }
+    uint32_t intervalMs = g_plugOffline
+      ? TASMOTA_OFFLINE_RETRY_MS
+      : (uint32_t)(tasmotaSettings.pollInterval > 0
+                   ? tasmotaSettings.pollInterval
+                   : TASMOTA_DEFAULT_INTERVAL) * 1000;
+    vTaskDelay(pdMS_TO_TICKS(intervalMs));
+  }
+}
+
+void tasmotaInit() {
+  if (g_taskHandle != NULL) {
+    vTaskSuspend(g_taskHandle);
+    vTaskDelete(g_taskHandle);
+    g_taskHandle = NULL;
+  }
+
+  g_watts              = -1.0f;
+  g_todayKwh           = -1.0f;
+  g_yesterdayKwh       = -1.0f;
+  g_printStartTodayKwh = -1.0f;
+  g_printUsedKwh       = -1.0f;
+  g_lastUpdateMs       = 0;
+  g_kwhChanged         = false;
+  g_plugOffline        = false;
+
+  if (tasmotaSettings.enabled && tasmotaSettings.ip[0] != '\0') {
+    xTaskCreate(pollTask, "tasmota", 6144, NULL, 1, &g_taskHandle);
   }
 }
 
@@ -125,27 +141,29 @@ bool tasmotaIsActiveForSlot(uint8_t slot) {
 
 void tasmotaMarkPrintStart() {
   if (!tasmotaSettings.enabled) return;
-  g_printStartTodayKwh = g_todayKwh;  // -1 if not yet polled
+  g_printStartTodayKwh = g_todayKwh;
   g_printUsedKwh       = -1.0f;
-  Serial.printf("[Tasmota] Print start marked, Today=%.3fkWh\n", g_printStartTodayKwh);
+  Serial.printf("[Tasmota] Print start marked, Today=%.3fkWh\n", (float)g_printStartTodayKwh);
 }
 
 void tasmotaMarkPrintEnd() {
   if (!tasmotaSettings.enabled) return;
-  if (g_printStartTodayKwh < 0.0f || g_todayKwh < 0.0f) {
+  float start = g_printStartTodayKwh;
+  float today = g_todayKwh;
+  float yest  = g_yesterdayKwh;
+
+  if (start < 0.0f || today < 0.0f) {
     Serial.println("[Tasmota] Print end: no baseline, skipping");
     return;
   }
 
-  if (g_todayKwh >= g_printStartTodayKwh) {
-    // Normal case: no midnight reset during print
-    g_printUsedKwh = g_todayKwh - g_printStartTodayKwh;
-  } else if (g_yesterdayKwh >= 0.0f) {
-    // Midnight passed: Yesterday holds the final Today value before reset
-    g_printUsedKwh = (g_yesterdayKwh - g_printStartTodayKwh) + g_todayKwh;
+  if (today >= start) {
+    g_printUsedKwh = today - start;
+  } else if (yest >= 0.0f) {
+    g_printUsedKwh = (yest - start) + today;
   }
 
-  Serial.printf("[Tasmota] Print end marked, used=%.3fkWh\n", g_printUsedKwh);
+  Serial.printf("[Tasmota] Print end marked, used=%.3fkWh\n", (float)g_printUsedKwh);
 }
 
 float tasmotaGetPrintKwhUsed() {

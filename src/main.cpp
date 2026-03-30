@@ -123,7 +123,6 @@ void loop() {
   handleWebServer();
 
   if (isWiFiConnected() && !isAPMode()) {
-    tasmotaLoop(millis());
     if (isAnyPrinterConfigured()) {
       handleBambuMqtt();
       handleRotation();

@@ -305,7 +305,7 @@ void loadSettings() {
   tasmotaSettings.enabled = prefs.getBool("tsm_en", false);
   strlcpy(tasmotaSettings.ip, prefs.getString("tsm_ip", "").c_str(), sizeof(tasmotaSettings.ip));
   tasmotaSettings.displayMode = prefs.getUChar("tsm_dm", 0);
-  tasmotaSettings.pollInterval = 30;  // fixed; interval controlled in tasmota.cpp
+  tasmotaSettings.pollInterval = prefs.getUChar("tsm_pi", 10);
   tasmotaSettings.assignedSlot = prefs.getUChar("tsm_slot", 255);
 
   prefs.end();

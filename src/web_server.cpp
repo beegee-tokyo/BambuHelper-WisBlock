@@ -569,9 +569,7 @@ static const char PAGE_HTML[] PROGMEM = R"rawliteral(
       <label for="tsm_slot" style="margin-top:12px">Assigned printer</label>
       <select id="tsm_slot">%TSM_SLOT_OPTIONS%</select>
       <label for="tsm_pi" style="margin-top:12px">Poll interval</label>
-      <select id="tsm_pi" disabled>
-        <option value="30" selected>30 seconds</option>
-      </select>
+      <select id="tsm_pi">%TSM_PI_OPTIONS%</select>
       <button type="button" class="btn btn-primary" onclick="savePower()">Save Power Settings</button>
       <div id="powerStatus" style="margin-top:8px;font-size:13px"></div>
     </div>
@@ -800,6 +798,7 @@ function savePower(){
   var dm=document.querySelector('input[name="tsm_dm"]:checked');
   if(dm) p.append('tsm_dm',dm.value);
   p.append('tsm_slot',document.getElementById('tsm_slot').value);
+  p.append('tsm_pi',document.getElementById('tsm_pi').value);
   fetch('/save/power',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:p.toString()})
     .then(function(r){return r.json();})
     .then(function(d){if(d.status==='ok') showToast('Power settings saved');})
@@ -1231,6 +1230,23 @@ static void processTemplate(String& page) {
     }
     page.replace("%TSM_SLOT_OPTIONS%", slotOpts);
   }
+  // Tasmota poll interval dropdown
+  {
+    static const uint8_t intervals[] = {10, 15, 20, 30, 60};
+    static const char* const labels[] = {"10 seconds", "15 seconds", "20 seconds", "30 seconds", "60 seconds"};
+    uint8_t cur = tasmotaSettings.pollInterval > 0 ? tasmotaSettings.pollInterval : 10;
+    String piOpts;
+    for (int i = 0; i < 5; i++) {
+      piOpts += "<option value=\"";
+      piOpts += String(intervals[i]);
+      piOpts += "\"";
+      if (cur == intervals[i]) piOpts += " selected";
+      piOpts += ">";
+      piOpts += labels[i];
+      piOpts += "</option>";
+    }
+    page.replace("%TSM_PI_OPTIONS%", piOpts);
+  }
 
 }
 
@@ -1635,6 +1651,10 @@ static void handleSavePower() {
   if (server.hasArg("tsm_slot")) {
     int slot = server.arg("tsm_slot").toInt();
     tasmotaSettings.assignedSlot = (slot >= 0 && slot < MAX_ACTIVE_PRINTERS) ? (uint8_t)slot : 255;
+  }
+  if (server.hasArg("tsm_pi")) {
+    int pi = server.arg("tsm_pi").toInt();
+    tasmotaSettings.pollInterval = (pi >= 10 && pi <= 60) ? (uint8_t)pi : 10;
   }
   saveSettings();
   tasmotaInit();
