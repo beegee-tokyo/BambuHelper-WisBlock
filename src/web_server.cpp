@@ -1499,6 +1499,7 @@ static void handleDebug() {
 
   doc["heap"] = ESP.getFreeHeap();
   doc["uptime"] = millis() / 1000;
+  doc["rssi"] = WiFi.RSSI();
   doc["debug_log"] = mqttDebugLog;
 
   String json;
