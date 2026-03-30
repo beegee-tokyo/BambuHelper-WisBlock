@@ -3,17 +3,20 @@
 Create BambuHelper release firmware files.
 
 Usage:
-    python merge_bins.py              # auto-reads version, builds S3
-    python merge_bins.py --board cyd  # build CYD firmware
-    python merge_bins.py v2.5         # override version
-    python merge_bins.py --ota        # OTA binary only
-    python merge_bins.py --full       # WebFlasher binary only
+    python merge_bins.py                    # auto-reads version, builds esp32s3
+    python merge_bins.py --board cyd        # build CYD firmware
+    python merge_bins.py --board esp32c3    # build ESP32-C3 firmware
+    python merge_bins.py v2.5               # override version
+    python merge_bins.py --ota              # OTA binary only
+    python merge_bins.py --full             # Full (WebFlasher) binary only
 
 Output:
-    firmware/v2.4-Beta1/BambuHelper-WebFlasher-v2.4-Beta1.bin
-    firmware/v2.4-Beta1/BambuHelper-OTA-v2.4-Beta1.bin
-    firmware/v2.4-Beta1/BambuHelper-CYD-WebFlasher-v2.4-Beta1.bin
-    firmware/v2.4-Beta1/BambuHelper-CYD-OTA-v2.4-Beta1.bin
+    firmware/v2.5/BambuHelper-esp32s3-v2.5-Full.bin
+    firmware/v2.5/BambuHelper-esp32s3-v2.5-ota.bin
+    firmware/v2.5/BambuHelper-cyd-v2.5-Full.bin
+    firmware/v2.5/BambuHelper-cyd-v2.5-ota.bin
+    firmware/v2.5/BambuHelper-esp32c3-v2.5-Full.bin
+    firmware/v2.5/BambuHelper-esp32c3-v2.5-ota.bin
 """
 
 import argparse
@@ -28,14 +31,21 @@ BOARDS = {
         'bootloader_offset': 0x0,       # ESP32-S3 starts at 0x0
         'partitions_offset': 0x8000,
         'firmware_offset': 0x10000,
-        'name_prefix': 'BambuHelper',
+        'board_id': 'esp32s3',
     },
     'cyd': {
         'build_dir': '.pio/build/cyd',
-        'bootloader_offset': 0x1000,     # Standard ESP32 starts at 0x1000
+        'bootloader_offset': 0x1000,    # Standard ESP32 starts at 0x1000
         'partitions_offset': 0x8000,
         'firmware_offset': 0x10000,
-        'name_prefix': 'BambuHelper-CYD',
+        'board_id': 'cyd',
+    },
+    'esp32c3': {
+        'build_dir': '.pio/build/esp32c3',
+        'bootloader_offset': 0x0,       # ESP32-C3 starts at 0x0
+        'partitions_offset': 0x8000,
+        'firmware_offset': 0x10000,
+        'board_id': 'esp32c3',
     },
 }
 
@@ -58,10 +68,10 @@ def get_paths(version, board):
     """Return output directory and file paths for a given version and board."""
     cfg = BOARDS[board]
     out_dir = os.path.join('firmware', version)
-    prefix = cfg['name_prefix']
-    merged = os.path.join(out_dir, f'{prefix}-WebFlasher-{version}.bin')
-    ota = os.path.join(out_dir, f'{prefix}-OTA-{version}.bin')
-    return out_dir, merged, ota
+    board_id = cfg['board_id']
+    full = os.path.join(out_dir, f'BambuHelper-{board_id}-{version}-Full.bin')
+    ota = os.path.join(out_dir, f'BambuHelper-{board_id}-{version}-ota.bin')
+    return out_dir, full, ota
 
 
 def create_ota_binary(out_dir, out_path, board):
@@ -78,7 +88,7 @@ def create_ota_binary(out_dir, out_path, board):
         dst.write(src.read())
 
     size = os.path.getsize(out_path)
-    print(f"  OTA binary: {out_path} ({size / 1024:.1f} KB)")
+    print(f"  OTA:  {out_path} ({size / 1024:.1f} KB)")
     return True
 
 
@@ -127,7 +137,7 @@ def merge_binaries(out_dir, out_path, board):
             out.write(fw)
 
     total = os.path.getsize(out_path)
-    print(f"  WebFlasher: {out_path} ({total / 1024:.1f} KB)")
+    print(f"  Full: {out_path} ({total / 1024:.1f} KB)")
     return True
 
 
@@ -136,7 +146,7 @@ if __name__ == '__main__':
     parser.add_argument('version', nargs='?', default=None, help='Version (default: read from config.h)')
     parser.add_argument('--board', choices=list(BOARDS.keys()), default='s3', help='Board target (default: s3)')
     parser.add_argument('--ota', action='store_true', help='OTA binary only')
-    parser.add_argument('--full', action='store_true', help='WebFlasher binary only')
+    parser.add_argument('--full', action='store_true', help='Full (WebFlasher) binary only')
     args = parser.parse_args()
 
     version = args.version or read_version_from_config()
@@ -158,12 +168,12 @@ if __name__ == '__main__':
         success = s1 and s2
 
         if success:
-            prefix = BOARDS[board]['name_prefix']
+            board_id = BOARDS[board]['board_id']
             print(f"\n{'='*60}")
-            print(f"Release {version} ({board}) ready in {out_dir}/")
+            print(f"Release {version} ({board_id}) ready in {out_dir}/")
             print(f"{'='*60}")
             print(f"\nGitHub Release - attach both files:")
-            print(f"  ...{prefix}-WebFlasher-{version}.bin  - new users (ESP Web Flasher)")
-            print(f"  ...{prefix}-OTA-{version}.bin         - existing users (Web UI update)")
+            print(f"  BambuHelper-{board_id}-{version}-Full.bin  - new users (ESP Web Flasher)")
+            print(f"  BambuHelper-{board_id}-{version}-ota.bin   - existing users (Web UI update)")
 
     sys.exit(0 if success else 1)

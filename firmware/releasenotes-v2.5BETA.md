@@ -83,6 +83,35 @@
 - **Cloud token zeroed from stack** immediately after MQTT connect
 - **TLS certificate verification** enabled for cloud API calls using the same CA bundle already used for MQTT; falls back to unverified only if the CA handshake fails (protects deployed devices against CA chain rotation)
 
+## Fix: display going blank when applying settings in clock/screensaver mode
+*contributed by [@theNailz](https://github.com/theNailz) in [#29](https://github.com/Keralots/BambuHelper/pull/29)*
+
+- Applying any display setting while the clock or screensaver was active caused the screen to go black for up to 60 seconds
+- Root causes: `configTzTime()` was called unconditionally on every settings save (resetting SNTP sync), `getLocalTime()` had no fallback when SNTP failed, and the 250ms display throttle delayed the redraw
+- Fixed: timezone is only reconfigured when it actually changed; hardware RTC fallback added to clock rendering; display throttle reset on settings apply for immediate redraw
+
+## Memory safety fixes
+*contributed by [@theNailz](https://github.com/theNailz) in [#32](https://github.com/Keralots/BambuHelper/pull/32)*
+
+- **HTTP client leak** fixed in `bambu_cloud`: `http.end()` now called on all return paths
+- **Unsigned underflow** fixed in AMS search loop in `bambu_mqtt`: subtraction guarded against wrapping to a huge value causing out-of-bounds read
+- **Array bounds** enforced in `clock_pong`: added `BRICK_COLOR_COUNT` constant and `static_assert` to make the `brickColors` size contract compiler-enforced
+- **Null-pointer crash** fixed in gauge cache: when cache was full, callers received `nullptr` which was never checked - replaced with FIFO eviction so a valid slot is always returned
+- **Null check** added in `htmlToRgb565` before dereferencing the argument
+- **DNS server leak** fixed in `wifi_manager`: AP DNS server is now properly stopped and freed when transitioning to STA mode
+
+## Concurrency and state-guard fixes
+*contributed by [@theNailz](https://github.com/theNailz) in [#33](https://github.com/Keralots/BambuHelper/pull/33)*
+
+- **Timer sentinel** replaced: `millis() == 0` used as "not started" flag would misfire after ~49 days of uptime; replaced with explicit boolean flags
+- **Array bounds check** added to `displayedPrinter()` to prevent out-of-bounds access on invalid printer index
+- **Stale fetch guard** added for rapid printer tab switching in the config portal
+
+## WiFi RSSI in /debug endpoint
+*contributed by [@theNailz](https://github.com/theNailz) in [#31](https://github.com/Keralots/BambuHelper/pull/31)*
+
+- WiFi signal strength (dBm) now included in the `GET /debug` JSON response - useful for diagnosing connectivity issues without a serial connection
+
 ## Fix: false "Ready" screen during cloud printing
 
 - During long prints on cloud-connected printers (H2C/H2D), the screen could occasionally switch to the "Ready" idle view mid-print, showing correct temperatures but no print progress
