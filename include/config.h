@@ -4,20 +4,21 @@
 // =============================================================================
 //  Firmware version
 // =============================================================================
-#define FW_VERSION          "v2.3"
+#define FW_VERSION          "v2.5Beta2"
+
+// Board variant — injected into the web UI for OTA asset filtering.
+// Normally set via build_flags in platformio.ini; this is a fallback.
+#ifndef BOARD_VARIANT
+#define BOARD_VARIANT       "esp32s3"
+#endif
 
 // =============================================================================
 //  Display
 // =============================================================================
-#define SCREEN_W        240
-#ifdef _VARIANT_RAK3112_
-#define SCREEN_H 320
-#define BACKLIGHT_PIN WB_IO3
-#define TFT_BACKLIGHT_ON HIGH
-#else
-#define SCREEN_H        240
-#define BACKLIGHT_PIN   TFT_BL  // GPIO 13
-#endif
+#include "layout.h"
+#define SCREEN_W        LY_W
+#define SCREEN_H        LY_H
+#define BACKLIGHT_PIN   TFT_BL  // set by build flags per board
 #define BACKLIGHT_CH    0
 #define BACKLIGHT_FREQ  5000
 #define BACKLIGHT_RES   8
@@ -87,7 +88,11 @@
 // =============================================================================
 //  Physical button
 // =============================================================================
+#ifdef DISPLAY_CYD
+#define BUTTON_DEFAULT_PIN    0       // CYD: GPIO4 is RGB LED, not usable
+#else
 #define BUTTON_DEFAULT_PIN    4       // default GPIO for physical button
+#endif
 
 // =============================================================================
 //  Display refresh

@@ -51,9 +51,12 @@ struct BambuState {
   int8_t wifiSignal;          // RSSI in dBm
   uint8_t speedLevel;         // 1=silent, 2=standard, 3=sport, 4=ludicrous
   bool dualNozzle;            // H2D/H2C dual extruder detected
-  uint8_t activeNozzle;       // 0=left, 1=right (only when dualNozzle)
+  uint8_t activeNozzle;       // 0=right, 1=left (only when dualNozzle)
+  bool doorOpen;              // door/enclosure open (H2 series: parsed from stat field)
+  bool doorSensorPresent;     // true if stat field with door bit has been received
   unsigned long lastUpdate;   // millis() of last MQTT message
   bool finishBuzzerPlayed;    // true after FINISH buzzer played (reset on next print)
+  bool doorAcknowledged;      // true after door opened on FINISH screen (print removed)
   AmsState ams;               // AMS tray data
 };
 
@@ -96,7 +99,8 @@ struct RotationState {
 extern RotationState rotState;
 
 inline PrinterSlot& displayedPrinter() {
-  return printers[rotState.displayIndex];
+  uint8_t idx = rotState.displayIndex < MAX_PRINTERS ? rotState.displayIndex : 0;
+  return printers[idx];
 }
 
 #endif // BAMBU_STATE_H

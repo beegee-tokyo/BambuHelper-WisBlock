@@ -26,6 +26,14 @@ String getAPSSID() {
   return apSSID;
 }
 
+static void stopAP() {
+  if (dnsServer) {
+    dnsServer->stop();
+    delete dnsServer;
+    dnsServer = nullptr;
+  }
+}
+
 static void startAP() {
   // Build SSID from MAC
   uint32_t mac = (uint32_t)(ESP.getEfuseMac() & 0xFFFF);
@@ -68,21 +76,29 @@ void initWiFi() {
       }
     }
 
-    WiFi.begin(wifiSSID, wifiPass);
     setScreenState(SCREEN_CONNECTING_WIFI);
 
-    Serial.printf("Connecting to WiFi: %s\n", wifiSSID);
+    for (int attempt = 1; attempt <= 3; attempt++) {
+      Serial.printf("Connecting to WiFi: %s (attempt %d/3)\n", wifiSSID, attempt);
+      WiFi.begin(wifiSSID, wifiPass);
 
-    unsigned long start = millis();
-    while (WiFi.status() != WL_CONNECTED &&
-           millis() - start < WIFI_CONNECT_TIMEOUT) {
-      delay(100);
-      updateDisplay();
+      unsigned long start = millis();
+      while (WiFi.status() != WL_CONNECTED &&
+             millis() - start < WIFI_CONNECT_TIMEOUT) {
+        delay(100);
+        updateDisplay();
+      }
+      if (WiFi.status() == WL_CONNECTED) break;
+
+      Serial.println("WiFi attempt failed, retrying...");
+      WiFi.disconnect(true);
+      delay(1000);
     }
 
     if (WiFi.status() == WL_CONNECTED) {
       Serial.printf("WiFi connected! IP: %s\n",
                     WiFi.localIP().toString().c_str());
+      stopAP();
       apMode = false;
       disconnectTime = 0;
 

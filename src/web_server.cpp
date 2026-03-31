@@ -9,8 +9,14 @@
 #include "button.h"
 #include "buzzer.h"
 #include "timezones.h"
+#include "tasmota.h"
 #include <WebServer.h>
 #include <ArduinoJson.h>
+#include <Update.h>
+#include <HTTPUpdate.h>
+#include <WiFiClientSecure.h>
+
+extern const uint8_t rootca_crt_bundle_start[] asm("_binary_x509_crt_bundle_start");
 
 static WebServer server(80);
 
@@ -56,7 +62,7 @@ function saveWifi(){
   var d=new URLSearchParams();d.append('ssid',s);d.append('pass',p);
   fetch('/save/wifi',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:d.toString()})
     .then(function(){document.body.innerHTML='<div style="text-align:center;padding-top:80px"><h2 style="color:#3FB950">WiFi Saved!</h2><p style="color:#8B949E;margin-top:10px">Restarting... Connect to your WiFi and open the device IP in a browser.</p></div>';})
-    .catch(function(){document.getElementById('msg').innerHTML='<span style="color:#F85149">Error</span>';});
+    .catch(function(e){document.getElementById('msg').style.color='#F85149';document.getElementById('msg').textContent='Connection error';console.warn('saveWifi:',e);});
 }
 </script>
 </body></html>
@@ -241,42 +247,81 @@ static const char PAGE_HTML[] PROGMEM = R"rawliteral(
   </div>
   <div class="section-content" id="sec-display">
     <div class="section-body">
+      <h3 style="color:#58A6FF;font-size:14px;margin-bottom:10px">Brightness</h3>
       <label for="bright">Brightness: <span id="brightVal">%BRIGHT%</span></label>
-      <input type="range" id="bright" min="10" max="255" value="%BRIGHT%"
-             oninput="document.getElementById('brightVal').textContent=this.value">
+      <input type="range" id="bright" min="10" max="255" step="5" value="%BRIGHT%"
+             oninput="document.getElementById('brightVal').textContent=this.value;sendBrightness(this.value)">
+      <div style="margin-top:12px">
+        <div class="check-row">
+          <input type="checkbox" id="nighten" value="1" %NIGHTEN% onchange="document.getElementById('nightFields').style.display=this.checked?'block':'none';toggleSetting('nighten',this.checked)">
+          <label for="nighten">Night mode (scheduled dimming)</label>
+        </div>
+        <div id="nightFields" style="display:%NIGHTDISP%;padding:10px;background:#0D1117;border:1px solid #30363D;border-radius:6px;margin-top:6px">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px">
+            <div>
+              <label for="nstart" style="font-size:12px">Dim from</label>
+              <select id="nstart">%NIGHT_START_OPTS%</select>
+            </div>
+            <div>
+              <label for="nend" style="font-size:12px">Dim until</label>
+              <select id="nend">%NIGHT_END_OPTS%</select>
+            </div>
+          </div>
+          <label for="nbright" style="font-size:12px">Night brightness: <span id="nbrightVal">%NBRIGHT%</span></label>
+          <input type="range" id="nbright" min="0" max="255" step="5" value="%NBRIGHT%"
+                 oninput="document.getElementById('nbrightVal').textContent=this.value">
+          <p style="font-size:11px;color:#8B949E;margin-top:4px">Recommended: 20-50 for night use. Requires NTP time sync.</p>
+        </div>
+      </div>
 
-      <label for="rotation">Screen Rotation</label>
-      <select id="rotation">
-        <option value="0" %ROT0%>0&deg; (default)</option>
-        <option value="1" %ROT1%>90&deg;</option>
-        <option value="2" %ROT2%>180&deg;</option>
-        <option value="3" %ROT3%>270&deg;</option>
-      </select>
+      <div style="margin-top:16px;padding-top:12px;border-top:1px solid #30363D">
+        <h3 style="color:#58A6FF;font-size:14px;margin-bottom:10px">After Print Completes</h3>
+        <label for="afterprint">When print finishes</label>
+        <select id="afterprint" onchange="toggleAfterPrint()">
+          <option value="0" %AP_CLOCK0%>Go to clock/screensaver immediately</option>
+          <option value="1" %AP_F1%>Show finish screen for 1 minute</option>
+          <option value="3" %AP_F3%>Show finish screen for 3 minutes</option>
+          <option value="5" %AP_F5%>Show finish screen for 5 minutes</option>
+          <option value="10" %AP_F10%>Show finish screen for 10 minutes</option>
+          <option value="custom" %AP_CUSTOM%>Custom duration...</option>
+          <option value="keepon" %AP_KEEPON%>Keep finish screen on</option>
+        </select>
+        <div id="customMinsWrap" style="display:%CUSTOM_DISP%;margin-top:6px">
+          <label for="fmins" style="font-size:12px">Minutes</label>
+          <input type="number" id="fmins" min="1" max="999" value="%FMINS%">
+        </div>
+        <div class="check-row" style="margin-top:8px">
+          <input type="checkbox" id="dack" value="1" %DACK% onchange="toggleSetting('dack',this.checked)">
+          <label for="dack">Wait for door open before timeout</label>
+        </div>
+        <label for="ssbright" style="margin-top:12px;font-size:12px">Screensaver brightness: <span id="ssbrightVal">%SSBRIGHT%</span></label>
+        <input type="range" id="ssbright" min="0" max="255" step="5" value="%SSBRIGHT%"
+               oninput="document.getElementById('ssbrightVal').textContent=this.value">
+        <p style="font-size:11px;color:#8B949E;margin-top:4px">Brightness when clock/screensaver is active. Set to 0 to turn off backlight.</p>
+        <div class="check-row" id="pong-row">
+          <input type="checkbox" id="pong" value="1" %PONG% onchange="toggleSetting('pong',this.checked)">
+          <label for="pong">Breakout clock (animated game as screensaver)</label>
+        </div>
+        <p style="font-size:11px;color:#8B949E;margin-top:4px">Without a physical button, clock is always shown instead of turning display off.</p>
+      </div>
 
-      <label for="fmins">Display off after print complete (minutes, 0 = never)</label>
-      <input type="number" id="fmins" min="0" max="999" value="%FMINS%">
-      <div class="check-row">
-        <input type="checkbox" id="keepon" value="1" %KEEPON%>
-        <label for="keepon">Keep display always on (override timeout)</label>
-      </div>
-      <div class="check-row">
-        <input type="checkbox" id="clock" value="1" %CLOCK%>
-        <label for="clock">Show clock after print (instead of screen off)</label>
-      </div>
-      <div class="check-row">
-        <input type="checkbox" id="abar" value="1" %ABAR%>
-        <label for="abar">Animated progress bar (shimmer effect)</label>
-      </div>
-      <div class="check-row" id="pong-row">
-        <input type="checkbox" id="pong" value="1" %PONG%>
-        <label for="pong">Pong clock (animated Breakout game as clock screen)</label>
-      </div>
-      <div class="check-row">
-        <input type="checkbox" id="slbl" value="1" %SLBL%>
-        <label for="slbl">Smaller gauge labels</label>
-      </div>
-      <div style="font-size:11px;color:#8B949E;margin-top:4px">
-        Note: Without a physical button, display will show clock instead of turning off (no way to wake manually).
+      <div style="margin-top:16px;padding-top:12px;border-top:1px solid #30363D">
+        <h3 style="color:#58A6FF;font-size:14px;margin-bottom:10px">Screen</h3>
+        <label for="rotation">Screen Rotation</label>
+        <select id="rotation">
+          <option value="0" %ROT0%>0&deg; (default)</option>
+          <option value="1" %ROT1%>90&deg;</option>
+          <option value="2" %ROT2%>180&deg;</option>
+          <option value="3" %ROT3%>270&deg;</option>
+        </select>
+        <div class="check-row">
+          <input type="checkbox" id="abar" value="1" %ABAR% onchange="toggleSetting('abar',this.checked)">
+          <label for="abar">Animated progress bar (shimmer effect)</label>
+        </div>
+        <div class="check-row">
+          <input type="checkbox" id="slbl" value="1" %SLBL% onchange="toggleSetting('slbl',this.checked)">
+          <label for="slbl">Smaller gauge labels</label>
+        </div>
       </div>
 
       <div style="margin-top:16px;padding-top:12px;border-top:1px solid #30363D">
@@ -286,9 +331,18 @@ static const char PAGE_HTML[] PROGMEM = R"rawliteral(
 %TIMEZONE_OPTIONS%
         </select>
         <div class="check-row">
-          <input type="checkbox" id="use24h" value="1" %USE24H%>
+          <input type="checkbox" id="use24h" value="1" %USE24H% onchange="toggleSetting('use24h',this.checked)">
           <label for="use24h">24-hour time format</label>
         </div>
+        <label for="datefmt" style="margin-top:10px">Date format</label>
+        <select id="datefmt">
+          <option value="0" %DATEFMT0%>DD.MM.YYYY (31.12.2025)</option>
+          <option value="1" %DATEFMT1%>DD-MM-YYYY (31-12-2025)</option>
+          <option value="2" %DATEFMT2%>MM/DD/YYYY (12/31/2025)</option>
+          <option value="3" %DATEFMT3%>YYYY-MM-DD (2025-12-31)</option>
+          <option value="4" %DATEFMT4%>DD MMM YYYY (31 Dec 2025)</option>
+          <option value="5" %DATEFMT5%>MMM DD, YYYY (Dec 31, 2025)</option>
+        </select>
       </div>
 
       <div style="margin-top:16px;padding-top:12px;border-top:1px solid #30363D">
@@ -373,6 +427,7 @@ static const char PAGE_HTML[] PROGMEM = R"rawliteral(
           <option value="0" %BTN_OFF%>Disabled</option>
           <option value="1" %BTN_PUSH%>Push Button (active LOW)</option>
           <option value="2" %BTN_TOUCH%>TTP223 Touch (active HIGH)</option>
+          <option value="3" %BTN_SCREEN%>Touchscreen (XPT2046)</option>
         </select>
         <div id="btnPinRow">
           <label for="btnpin">Button GPIO Pin</label>
@@ -438,6 +493,7 @@ static const char PAGE_HTML[] PROGMEM = R"rawliteral(
         <input type="text" id="net_dns" value="%NET_DNS%" placeholder="8.8.8.8">
       </div>
       <div class="check-row">
+        <input type="hidden" name="has_showip" value="1">
         <input type="checkbox" id="showip" value="1" %SHOWIP%>
         <label for="showip">Show IP at startup (3s)</label>
       </div>
@@ -462,13 +518,107 @@ static const char PAGE_HTML[] PROGMEM = R"rawliteral(
         </div>
       </div>
       <div style="margin-top:20px;padding-top:12px;border-top:1px solid #30363D">
+        <h3 style="color:#58A6FF;font-size:14px;margin-bottom:6px">Firmware Update</h3>
+        <p style="font-size:13px;color:#8B949E;margin-bottom:10px">
+          Current version: <b style="color:#58A6FF">%FW_VER%</b>
+        </p>
+        <div style="display:flex;gap:4px;margin-bottom:12px">
+          <button type="button" id="tab-auto-btn" onclick="switchFwTab('auto')"
+            style="flex:1;padding:8px;border:1px solid #58A6FF;border-radius:6px;background:#21262D;color:#E6EDF3;font-size:13px;cursor:pointer">Auto Update</button>
+          <button type="button" id="tab-manual-btn" onclick="switchFwTab('manual')"
+            style="flex:1;padding:8px;border:1px solid #30363D;border-radius:6px;background:#0D1117;color:#8B949E;font-size:13px;cursor:pointer">Manual Upload</button>
+        </div>
+        <!-- Auto Update tab -->
+        <div id="fw-tab-auto">
+          <p style="font-size:12px;color:#8B949E;margin-bottom:10px">
+            Check for and install BambuHelper display device firmware updates directly from GitHub.
+          </p>
+          <div id="updateCheck" style="margin-bottom:12px">
+            <button type="button" class="btn btn-blue" onclick="checkForUpdates()">Check for Updates</button>
+            <span id="updateResult" style="margin-left:8px;font-size:13px"></span>
+          </div>
+          <div id="updateInfo" style="display:none;margin-bottom:12px;padding:10px;background:#0D1117;border:1px solid #30363D;border-radius:6px">
+            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px">
+              <div>
+                <b id="updateVer" style="color:#3FB950;font-size:14px"></b>
+                <span id="updateDate" style="color:#8B949E;font-size:12px;margin-left:8px"></span>
+              </div>
+              <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+                <button id="installBtn" type="button" class="btn btn-primary" style="font-size:12px;padding:4px 12px" onclick="installUpdate()">Install on BambuHelper</button>
+                <a id="updateLink" href="#" target="_blank" class="btn" style="font-size:12px;padding:4px 12px;text-decoration:none;background:#21262D;color:#C9D1D9;border:1px solid #30363D;border-radius:6px">Manual download</a>
+              </div>
+            </div>
+            <div id="autoOtaWrap" style="display:none;margin-top:10px">
+              <div style="background:#30363D;border-radius:4px;height:16px;overflow:hidden">
+                <div id="autoOtaBar" style="background:#238636;height:100%;width:0%;transition:width 0.4s;border-radius:4px"></div>
+              </div>
+              <div id="autoOtaStatus" style="text-align:center;font-size:12px;color:#8B949E;margin-top:4px">Starting...</div>
+              <p style="font-size:11px;color:#F0883E;margin-top:6px;text-align:center">&#9888; Do not power off or close this page</p>
+            </div>
+          </div>
+        </div>
+        <!-- Manual Upload tab -->
+        <div id="fw-tab-manual" style="display:none">
+          <p style="font-size:12px;color:#8B949E;margin-bottom:10px">
+            Upload a .bin file to update BambuHelper display device firmware. Settings are preserved. Device restarts automatically.
+          </p>
+          <input type="file" id="otaFile" accept=".bin"
+                 style="width:100%;padding:6px;background:#0D1117;border:1px solid #30363D;border-radius:6px;color:#C9D1D9">
+          <div id="otaProgress" style="display:none;margin-top:12px">
+            <div style="background:#30363D;border-radius:4px;height:20px;overflow:hidden">
+              <div id="otaBar" style="background:#238636;height:100%;width:0%;transition:width 0.3s;border-radius:4px"></div>
+            </div>
+            <div id="otaPct" style="text-align:center;font-size:13px;color:#E6EDF3;margin-top:4px">0%</div>
+          </div>
+          <div id="otaStatus" style="margin-top:8px;font-size:13px"></div>
+          <button type="button" class="btn btn-primary" style="margin-top:8px" onclick="startOta()">Upload &amp; Update</button>
+        </div>
+      </div>
+      <div style="margin-top:20px;padding-top:12px;border-top:1px solid #30363D">
         <button type="button" class="btn btn-danger" onclick="if(confirm('Reset all settings to factory defaults?'))location='/reset'">Factory Reset</button>
       </div>
     </div>
   </div>
 </div>
 
-<!-- ===== Section 5: Diagnostics ===== -->
+<!-- ===== Section 5: Power Monitoring ===== -->
+<div class="section" id="s-power">
+  <div class="section-header" onclick="toggleSection('power')">
+    <h2>Power Monitoring</h2>
+    <span class="arrow" id="arr-power">&#9654;</span>
+  </div>
+  <div class="section-content" id="sec-power">
+    <div class="section-body">
+      <p style="font-size:12px;color:#8B949E;margin-bottom:12px">
+        Show live power consumption from a Tasmota smart plug on the display.<br>
+        Replaces or alternates with the layer counter in the bottom status bar.
+      </p>
+      <div class="check-row">
+        <input type="checkbox" id="tsm_en" value="1" %TSM_EN%>
+        <label for="tsm_en">Enable power monitoring</label>
+      </div>
+      <label for="tsm_ip" style="margin-top:12px">Tasmota plug IP address</label>
+      <input type="text" id="tsm_ip" value="%TSM_IP%" placeholder="192.168.1.x" maxlength="15">
+      <label style="margin-top:12px">Display mode</label>
+      <div style="display:flex;flex-direction:column;gap:6px;margin-top:4px">
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#C9D1D9">
+          <input type="radio" name="tsm_dm" value="0" %TSM_DM0%> Alternate: layer count / watts (every 4s)
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#C9D1D9">
+          <input type="radio" name="tsm_dm" value="1" %TSM_DM1%> Always show watts
+        </label>
+      </div>
+      <label for="tsm_slot" style="margin-top:12px">Assigned printer</label>
+      <select id="tsm_slot">%TSM_SLOT_OPTIONS%</select>
+      <label for="tsm_pi" style="margin-top:12px">Poll interval</label>
+      <select id="tsm_pi">%TSM_PI_OPTIONS%</select>
+      <button type="button" class="btn btn-primary" onclick="savePower()">Save Power Settings</button>
+      <div id="powerStatus" style="margin-top:8px;font-size:13px"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Section 6: Diagnostics ===== -->
 <div class="section" id="s-diag">
   <div class="section-header" onclick="toggleSection('diag')">
     <h2>Diagnostics</h2>
@@ -486,6 +636,25 @@ static const char PAGE_HTML[] PROGMEM = R"rawliteral(
 </div>
 
 <script>
+// --- HTML escape helper ---
+function esc(s){var d=document.createElement('div');d.appendChild(document.createTextNode(s));return d.innerHTML;}
+
+// --- Debounced brightness send ---
+var _brightTimer=null;
+function sendBrightness(val){clearTimeout(_brightTimer);_brightTimer=setTimeout(function(){fetch('/brightness?val='+val);},150);}
+
+// --- Polling timers (started/stopped when sections open/close) ---
+var diagTimer=null,statsTimer=null;
+function startPolling(id){
+  stopPolling();
+  if(id==='diag'){refreshDiag();diagTimer=setInterval(refreshDiag,5000);}
+  if(id==='printer'||id==='diag'){statsTimer=setInterval(refreshLiveStats,3000);refreshLiveStats();}
+}
+function stopPolling(){
+  if(diagTimer){clearInterval(diagTimer);diagTimer=null;}
+  if(statsTimer){clearInterval(statsTimer);statsTimer=null;}
+}
+
 // --- Collapsible sections ---
 function toggleSection(id){
   var content=document.getElementById('sec-'+id);
@@ -496,11 +665,13 @@ function toggleSection(id){
   document.querySelectorAll('.section-content').forEach(function(el){el.classList.remove('open');});
   document.querySelectorAll('.arrow').forEach(function(el){el.classList.remove('open');});
   document.querySelectorAll('.section').forEach(function(el){el.classList.remove('open');});
+  stopPolling();
   if(!isOpen){
     content.classList.add('open');
     arrow.classList.add('open');
     sect.classList.add('open');
     localStorage.setItem('bambu_section',id);
+    startPolling(id);
   } else {
     localStorage.removeItem('bambu_section');
   }
@@ -518,7 +689,9 @@ function selectPrinterTab(slot){
     btn.style.background=(i===slot)?'#238636':'#0D1117';
     btn.style.color=(i===slot)?'#fff':'#8B949E';
   });
+  var reqSlot=slot;
   fetch('/printer/config?slot='+slot).then(function(r){return r.json();}).then(function(d){
+    if(reqSlot!==currentSlot)return;
     document.getElementById('connmode').value=d.mode;
     document.getElementById('pname').value=d.name||'';
     document.getElementById('ip').value=d.ip||'';
@@ -533,7 +706,7 @@ function selectPrinterTab(slot){
     if(d.connected){ps.className='status status-ok';ps.textContent='Connected';}
     else if(d.configured){ps.className='status status-off';ps.textContent='Disconnected';}
     else{ps.className='status status-na';ps.textContent='Not configured';}
-  }).catch(function(){});
+  }).catch(function(e){console.warn('selectPrinterTab:',e);});
 }
 
 // --- Utility ---
@@ -583,7 +756,7 @@ function savePrinter(){
       else if(d.status==='ok') showToast('Printer settings saved!');
       else showToast('Error: '+(d.message||'save failed'));
     })
-    .catch(function(){showToast('Network error');});
+    .catch(function(e){showToast('Network error');console.warn('savePrinter:',e);});
 }
 
 // --- Save WiFi (restart) ---
@@ -596,26 +769,28 @@ function saveWifi(){
   p.append('net_gw',document.getElementById('net_gw').value);
   p.append('net_sn',document.getElementById('net_sn').value);
   p.append('net_dns',document.getElementById('net_dns').value);
+  p.append('has_showip','1');
   if(document.getElementById('showip').checked) p.append('showip','1');
   fetch('/save/wifi',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:p.toString()})
     .then(function(){
       document.body.innerHTML='<div style="text-align:center;padding-top:80px"><h2 style="color:#3FB950">WiFi Saved!</h2><p style="color:#8B949E;margin-top:10px">Restarting...</p></div>';
     })
-    .catch(function(){showToast('Error');});
+    .catch(function(e){showToast('Network error');console.warn('saveWifi:',e);});
 }
 
 // --- Cloud ---
 function cloudLogout(){
   fetch('/cloud/logout',{method:'POST'}).then(function(){
-    document.getElementById('cloudStatus').innerHTML='<span style="color:#8B949E">No token set</span>';
+    var cs=document.getElementById('cloudStatus');cs.style.color='#8B949E';cs.textContent='No token set';
     document.getElementById('cl_token').value='';
   });
 }
 
 // --- Hardware & Multi-Printer ---
 function toggleBtnPin(){
+  var v=document.getElementById('btntype').value;
   document.getElementById('btnPinRow').style.display=
-    document.getElementById('btntype').value==='0'?'none':'block';
+    (v==='0'||v==='3')?'none':'block';
 }
 toggleBtnPin();
 
@@ -636,7 +811,7 @@ function testBuzzer(){
   fetch('/buzzer/test',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'sound='+snd.id})
     .then(function(r){return r.json();})
     .then(function(d){if(d.status==='ok') showToast('Playing: '+snd.name);})
-    .catch(function(){showToast('Error');});
+    .catch(function(e){showToast('Buzzer test failed');console.warn('testBuzzer:',e);});
   buzTestIdx=(buzTestIdx+1)%buzTestSounds.length;
   document.getElementById('buzTestBtn').textContent='Test: '+buzTestSounds[buzTestIdx].name;
 }
@@ -654,7 +829,22 @@ function saveRotation(){
   fetch('/save/rotation',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:p.toString()})
     .then(function(r){return r.json();})
     .then(function(d){if(d.status==='ok') showToast('Settings saved');})
-    .catch(function(){showToast('Error');});
+    .catch(function(e){showToast('Save failed');console.warn('saveRotation:',e);});
+}
+
+// --- Power monitoring ---
+function savePower(){
+  var p=new URLSearchParams();
+  if(document.getElementById('tsm_en').checked) p.append('tsm_en','1');
+  p.append('tsm_ip',document.getElementById('tsm_ip').value.trim());
+  var dm=document.querySelector('input[name="tsm_dm"]:checked');
+  if(dm) p.append('tsm_dm',dm.value);
+  p.append('tsm_slot',document.getElementById('tsm_slot').value);
+  p.append('tsm_pi',document.getElementById('tsm_pi').value);
+  fetch('/save/power',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:p.toString()})
+    .then(function(r){return r.json();})
+    .then(function(d){if(d.status==='ok') showToast('Power settings saved');})
+    .catch(function(e){showToast('Save failed');console.warn('savePower:',e);});
 }
 
 // --- Display ---
@@ -697,15 +887,23 @@ function applyTheme(name){
 function applyDisplay(){
   var p=new URLSearchParams();
   p.append('bright',document.getElementById('bright').value);
+  if(document.getElementById('nighten').checked) p.append('nighten','1');
+  p.append('nstart',document.getElementById('nstart').value);
+  p.append('nend',document.getElementById('nend').value);
+  p.append('nbright',document.getElementById('nbright').value);
+  p.append('ssbright',document.getElementById('ssbright').value);
   p.append('rotation',document.getElementById('rotation').value);
-  p.append('fmins',document.getElementById('fmins').value);
-  if(document.getElementById('keepon').checked) p.append('keepon','1');
-  if(document.getElementById('clock').checked) p.append('clock','1');
+  var ap=document.getElementById('afterprint').value;
+  if(ap==='keepon'){p.append('keepon','1');p.append('fmins','0');}
+  else if(ap==='custom'){p.append('fmins',document.getElementById('fmins').value);p.append('clock','1');}
+  else{p.append('fmins',ap);p.append('clock','1');}
+  if(document.getElementById('dack').checked) p.append('dack','1');
   if(document.getElementById('abar').checked) p.append('abar','1');
   if(document.getElementById('pong').checked) p.append('pong','1');
   if(document.getElementById('slbl').checked) p.append('slbl','1');
   p.append('tz',document.getElementById('tz').value);
   if(document.getElementById('use24h').checked) p.append('use24h','1');
+  p.append('datefmt',document.getElementById('datefmt').value);
   p.append('clr_bg',document.getElementById('clr_bg').value);
   p.append('clr_track',document.getElementById('clr_track').value);
   var g=['prg','noz','bed','pfn','afn','cfn'];
@@ -716,7 +914,15 @@ function applyDisplay(){
   }
   fetch('/apply',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:p.toString()}).then(function(r){
     if(r.ok) showToast('Applied!'); else showToast('Error');
-  }).catch(function(){showToast('Error');});
+  }).catch(function(e){showToast('Apply failed');console.warn('applyDisplay:',e);});
+}
+
+// --- Instant checkbox toggle ---
+function toggleSetting(key,on){
+  fetch('/save/toggle',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'key='+key+'&val='+(on?'1':'0')}).then(function(r){
+    if(r.ok) showToast(on?key+' ON':key+' OFF');
+    else showToast('Error');
+  }).catch(function(e){showToast('Toggle failed');console.warn('toggleSetting:',e);});
 }
 
 // --- Diagnostics ---
@@ -731,29 +937,26 @@ function refreshDiag(){
     if(d.printers){
       d.printers.forEach(function(p){
         h+='<div style="margin-bottom:8px;padding:6px;border-left:2px solid '+(p.connected?'#3FB950':'#F85149')+'">';
-        h+='<b style="color:#E6EDF3">'+p.name+'</b> (slot '+p.slot+')<br>';
+        h+='<b style="color:#E6EDF3">'+esc(p.name)+'</b> (slot '+p.slot+')<br>';
         h+='<div class="stat-row"><span>MQTT:</span><span class="stat-val">'+(p.connected?'<span style="color:#3FB950">Connected</span>':'<span style="color:#F85149">Disconnected</span>')+'</span></div>';
         h+='<div class="stat-row"><span>Attempts:</span><span class="stat-val">'+p.attempts+'</span></div>';
         h+='<div class="stat-row"><span>Messages RX:</span><span class="stat-val">'+p.messages+'</span></div>';
-        if(p.last_rc!==0) h+='<div class="stat-row"><span>Last error:</span><span class="stat-val" style="color:#F85149">'+p.rc_text+'</span></div>';
+        if(p.last_rc!==0) h+='<div class="stat-row"><span>Last error:</span><span class="stat-val" style="color:#F85149">'+esc(p.rc_text)+'</span></div>';
         h+='</div>';
       });
     }
     h+='<div class="stat-row"><span>Free heap:</span><span class="stat-val">'+Math.round(d.heap/1024)+'KB</span></div>';
     h+='<div class="stat-row"><span>Uptime:</span><span class="stat-val">'+Math.round(d.uptime/60)+'min</span></div>';
     document.getElementById('diagInfo').innerHTML=h;
-  }).catch(function(){});
+  }).catch(function(e){console.warn('refreshDiag:',e);});
 }
-refreshDiag();
-setInterval(refreshDiag,5000);
-
 // --- Live stats (shows currently selected tab's printer) ---
-setInterval(function(){
+function refreshLiveStats(){
   fetch('/status?slot='+currentSlot).then(r=>r.json()).then(d=>{
     var h='';
     if(d.display_off) h+='<div class="stat-row"><span>Display:</span><span class="stat-val" style="color:#F85149">Off</span></div>';
     if(d.connected){
-      h+='<div class="stat-row"><span>State:</span><span class="stat-val">'+d.state+'</span></div>';
+      h+='<div class="stat-row"><span>State:</span><span class="stat-val">'+esc(d.state)+'</span></div>';
       h+='<div class="stat-row"><span>Nozzle:</span><span class="stat-val">'+d.nozzle+'/'+d.nozzle_t+'&deg;C</span></div>';
       h+='<div class="stat-row"><span>Bed:</span><span class="stat-val">'+d.bed+'/'+d.bed_t+'&deg;C</span></div>';
       if(d.progress>0) h+='<div class="stat-row"><span>Progress:</span><span class="stat-val">'+d.progress+'%</span></div>';
@@ -769,8 +972,8 @@ setInterval(function(){
     else if(d.configured){ps.className='status status-off';ps.textContent='Disconnected / Printer Off';}
     else{ps.className='status status-na';ps.textContent='Not configured';}
     if(d.display_off && d.connected){ps.textContent+=' (Display Off)';}
-  }).catch(function(){});
-}, 3000);
+  }).catch(function(e){console.warn('liveStats:',e);});
+}
 
 // --- Settings export/import ---
 function exportSettings(){
@@ -791,33 +994,215 @@ function importSettings(){
   var fd=new FormData();
   fd.append('settings',f);
   var stat=document.getElementById('importStatus');
-  stat.innerHTML='<span style="color:#58A6FF">Importing...</span>';
+  stat.style.color='#58A6FF';stat.textContent='Importing...';
   fetch('/settings/import',{method:'POST',body:fd})
     .then(function(r){return r.json();})
     .then(function(d){
       if(d.status==='ok'){
-        stat.innerHTML='<span style="color:#3FB950">'+d.message+'</span>';
+        stat.style.color='#3FB950';stat.textContent=d.message;
       } else {
-        stat.innerHTML='<span style="color:#F85149">Error: '+d.message+'</span>';
+        stat.style.color='#F85149';stat.textContent='Error: '+d.message;
       }
     })
     .catch(function(){
-      stat.innerHTML='<span style="color:#F85149">Upload failed</span>';
+      stat.style.color='#F85149';stat.textContent='Upload failed';
     });
 }
 
-// Pong clock checkbox depends on clock-after-print being enabled
-(function(){
-  var clk=document.getElementById('clock');
+function startOta(){
+  var f=document.getElementById('otaFile').files[0];
+  if(!f){showToast('Select a .bin file first');return;}
+  if(!f.name.endsWith('.bin')){showToast('File must be .bin');return;}
+  if(f.size<32768){showToast('File too small');return;}
+  if(f.size>1310720){showToast('File too large (max 1.25MB)');return;}
+  if(!confirm('Upload firmware and restart?')) return;
+  var prog=document.getElementById('otaProgress');
+  var bar=document.getElementById('otaBar');
+  var pct=document.getElementById('otaPct');
+  var stat=document.getElementById('otaStatus');
+  prog.style.display='block';
+  bar.style.width='0%';
+  pct.textContent='0%';
+  stat.innerHTML='<span style="color:#58A6FF">Uploading...</span>';
+  var fd=new FormData();
+  fd.append('firmware',f);
+  var xhr=new XMLHttpRequest();
+  xhr.open('POST','/ota/upload',true);
+  xhr.upload.onprogress=function(e){
+    if(e.lengthComputable){
+      var p=Math.round(e.loaded/e.total*100);
+      bar.style.width=p+'%';
+      pct.textContent=p+'%';
+      if(p>=100){stat.style.color='#58A6FF';stat.textContent='Flashing...';}
+    }
+  };
+  xhr.onload=function(){
+    try{
+      var d=JSON.parse(xhr.responseText);
+      if(d.status==='ok'){
+        bar.style.width='100%';pct.textContent='100%';
+        stat.style.color='#3FB950';stat.textContent=d.message;
+      } else {
+        stat.style.color='#F85149';stat.textContent='Error: '+d.message;
+      }
+    }catch(e){
+      stat.style.color='#F85149';stat.textContent='Unexpected response';
+    }
+  };
+  xhr.onerror=function(){
+    stat.style.color='#F85149';stat.textContent='Upload failed (connection lost)';
+  };
+  xhr.send(fd);
+}
+
+var _autoOtaUrl='';
+var _autoOtaProgress=0;
+function switchFwTab(t){
+  document.getElementById('fw-tab-auto').style.display=t==='auto'?'block':'none';
+  document.getElementById('fw-tab-manual').style.display=t==='manual'?'block':'none';
+  var a=document.getElementById('tab-auto-btn'),m=document.getElementById('tab-manual-btn');
+  if(t==='auto'){a.style.borderColor='#58A6FF';a.style.background='#21262D';a.style.color='#E6EDF3';m.style.borderColor='#30363D';m.style.background='#0D1117';m.style.color='#8B949E';}
+  else{m.style.borderColor='#58A6FF';m.style.background='#21262D';m.style.color='#E6EDF3';a.style.borderColor='#30363D';a.style.background='#0D1117';a.style.color='#8B949E';}
+}
+function checkForUpdates(){
+  var res=document.getElementById('updateResult');
+  var info=document.getElementById('updateInfo');
+  res.style.color='#58A6FF';res.textContent='Checking...';
+  info.style.display='none';
+  _autoOtaUrl='';
+  fetch('https://api.github.com/repos/Keralots/BambuHelper/releases/latest')
+    .then(function(r){
+      if(!r.ok) throw new Error('GitHub API returned '+r.status);
+      return r.json();
+    })
+    .then(function(d){
+      var latest=d.tag_name;
+      var current='%FW_VER%';
+      if(latest===current){
+        res.style.color='#3FB950';res.textContent='You are up to date ('+current+')';
+        return;
+      }
+      // Find the OTA binary for this board variant.
+      // Expected filename: BambuHelper-<board>-<version>-ota.bin
+      // e.g. BambuHelper-esp32s3-v2.5-ota.bin
+      var board='%BOARD%';
+      var otaBin=null;
+      for(var i=0;i<d.assets.length;i++){
+        var n=d.assets[i].name;
+        if(n.indexOf(board)!==-1&&n.indexOf('-ota.')!==-1&&n.endsWith('.bin')){otaBin=d.assets[i];break;}
+      }
+      res.style.color='#F0883E';res.textContent='Update available!';
+      document.getElementById('updateVer').textContent=latest;
+      var pub=new Date(d.published_at);
+      document.getElementById('updateDate').textContent=pub.toLocaleDateString();
+      var installBtn=document.getElementById('installBtn');
+      var link=document.getElementById('updateLink');
+      if(otaBin){
+        _autoOtaUrl=otaBin.browser_download_url;
+        link.href=otaBin.browser_download_url;
+        link.style.display='inline-block';
+        installBtn.style.display='inline-block';
+      } else {
+        installBtn.style.display='none';
+        link.style.display='none';
+      }
+      info.style.display='block';
+    })
+    .catch(function(e){
+      res.style.color='#F85149';res.textContent='Check failed: '+e.message;
+      console.warn('updateCheck:',e);
+    });
+}
+function installUpdate(){
+  if(!_autoOtaUrl){return;}
+  var btn=document.getElementById('installBtn');
+  btn.disabled=true;btn.textContent='Installing...';
+  document.getElementById('autoOtaWrap').style.display='block';
+  document.getElementById('autoOtaBar').style.width='0%';
+  document.getElementById('autoOtaBar').style.background='#238636';
+  document.getElementById('autoOtaStatus').style.color='#8B949E';
+  document.getElementById('autoOtaStatus').textContent='Starting...';
+  _autoOtaProgress=0;
+  var p=new URLSearchParams();p.append('url',_autoOtaUrl);
+  fetch('/ota/auto',{method:'POST',body:p})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      if(d.error){throw new Error(d.error);}
+      pollOtaStatus();
+    })
+    .catch(function(e){
+      document.getElementById('autoOtaStatus').style.color='#F85149';
+      document.getElementById('autoOtaStatus').textContent='Error: '+e.message;
+      btn.disabled=false;btn.textContent='Install on BambuHelper';
+    });
+}
+var _otaPoller=null;
+function pollOtaStatus(){
+  _otaPoller=setInterval(function(){
+    fetch('/ota/status').then(function(r){return r.json();}).then(function(d){
+      var bar=document.getElementById('autoOtaBar');
+      var st=document.getElementById('autoOtaStatus');
+      _autoOtaProgress=d.progress||0;
+      bar.style.width=d.progress+'%';
+      if(d.status==='done'){
+        clearInterval(_otaPoller);_otaPoller=null;
+        bar.style.width='100%';bar.style.background='#3FB950';
+        st.style.color='#3FB950';st.textContent='Done! Restarting device...';
+        waitForReboot();
+      } else if(d.status&&d.status.indexOf('failed')===0){
+        clearInterval(_otaPoller);_otaPoller=null;
+        st.style.color='#F85149';st.textContent=d.status;
+        var btn=document.getElementById('installBtn');
+        btn.disabled=false;btn.textContent='Retry';
+      } else {
+        st.textContent=d.status+' ('+d.progress+'%)';
+      }
+    }).catch(function(){
+      // Device went offline or /ota/status no longer exists (rebooted to new firmware).
+      // If download reached 100%, the update succeeded — start reload detection.
+      if(_autoOtaProgress>=100){
+        clearInterval(_otaPoller);_otaPoller=null;
+        var bar=document.getElementById('autoOtaBar');
+        var st=document.getElementById('autoOtaStatus');
+        bar.style.width='100%';bar.style.background='#3FB950';
+        st.style.color='#3FB950';st.textContent='Done! Restarting device...';
+        waitForReboot();
+      }
+    });
+  },1000);
+}
+function waitForReboot(){
+  var st=document.getElementById('autoOtaStatus');
+  st.textContent='Waiting for device to restart...';
+  var wentOffline=false,tries=0;
+  var check=setInterval(function(){
+    fetch('/').then(function(){
+      if(wentOffline){
+        // Device is back online after going offline — reload to new firmware
+        clearInterval(check);
+        location.reload();
+      }
+      // else: device hasn't rebooted yet, keep waiting
+    }).catch(function(){
+      wentOffline=true;  // device went offline — reboot is in progress
+      tries++;
+      st.textContent='Restarting... ('+tries+'s)';
+      if(tries>60){clearInterval(check);st.textContent='Reboot timeout — please refresh manually.';}
+    });
+  },2000);
+}
+
+// Pong depends on afterprint not being "keepon" (no clock when keeping finish screen on)
+function toggleAfterPrint(){
+  var v=document.getElementById('afterprint').value;
+  document.getElementById('customMinsWrap').style.display=(v==='custom')?'block':'none';
   var pong=document.getElementById('pong');
   var row=document.getElementById('pong-row');
-  function upd(){
-    pong.disabled=!clk.checked;
-    row.style.opacity=clk.checked?'1':'0.4';
-  }
-  clk.onchange=upd;
-  upd();
-})();
+  var showClock=(v!=='keepon');
+  pong.disabled=!showClock;
+  row.style.opacity=showClock?'1':'0.4';
+}
+toggleAfterPrint();
 </script>
 </body>
 </html>
@@ -846,11 +1231,10 @@ static void replaceGaugeColors(String& page, const char* prefix, const GaugeColo
 // ---------------------------------------------------------------------------
 //  Template processor
 // ---------------------------------------------------------------------------
-static String processTemplate(const String& html) {
+static void processTemplate(String& page) {
   PrinterConfig& cfg = printers[0].config;
   BambuState& st = printers[0].state;
 
-  String page = html;
   page.replace("%SSID%", wifiSSID);
   page.replace("%PASS%", wifiPass);
   page.replace("%MODE_LOCAL%", cfg.mode == CONN_LOCAL ? "selected" : "");
@@ -872,6 +1256,26 @@ static String processTemplate(const String& html) {
   }
   page.replace("%BRIGHT%", String(brightness));
 
+  // Night mode
+  page.replace("%NIGHTEN%", dpSettings.nightModeEnabled ? "checked" : "");
+  page.replace("%NIGHTDISP%", dpSettings.nightModeEnabled ? "block" : "none");
+  page.replace("%NBRIGHT%", String(dpSettings.nightBrightness));
+  page.replace("%SSBRIGHT%", String(dpSettings.screensaverBrightness));
+  {
+    String startOpts, endOpts;
+    for (uint8_t h = 0; h < 24; h++) {
+      char opt[64];
+      snprintf(opt, sizeof(opt), "<option value=\"%d\"%s>%02d:00</option>",
+               h, h == dpSettings.nightStartHour ? " selected" : "", h);
+      startOpts += opt;
+      snprintf(opt, sizeof(opt), "<option value=\"%d\"%s>%02d:00</option>",
+               h, h == dpSettings.nightEndHour ? " selected" : "", h);
+      endOpts += opt;
+    }
+    page.replace("%NIGHT_START_OPTS%", startOpts);
+    page.replace("%NIGHT_END_OPTS%", endOpts);
+  }
+
   // Network settings
   page.replace("%NET_DHCP%", netSettings.useDHCP ? "selected" : "");
   page.replace("%NET_STATIC%", netSettings.useDHCP ? "" : "selected");
@@ -881,7 +1285,7 @@ static String processTemplate(const String& html) {
   page.replace("%NET_DNS%", netSettings.dns);
   page.replace("%SHOWIP%", netSettings.showIPAtStartup ? "checked" : "");
 
-  // Timezone dropdown (generated from database)
+  // Timezone dropdown (generated from database, sorted by UTC offset)
   {
     size_t tzCount;
     const TimezoneRegion* regions = getSupportedTimezones(&tzCount);
@@ -899,6 +1303,10 @@ static String processTemplate(const String& html) {
   }
 
   page.replace("%USE24H%", netSettings.use24h ? "checked" : "");
+  for (int i = 0; i < 6; i++) {
+    char ph[12]; snprintf(ph, sizeof(ph), "%%DATEFMT%d%%", i);
+    page.replace(ph, netSettings.dateFormat == i ? "selected" : "");
+  }
 
   // Rotation dropdown
   page.replace("%ROT0%", dispSettings.rotation == 0 ? "selected" : "");
@@ -907,9 +1315,22 @@ static String processTemplate(const String& html) {
   page.replace("%ROT3%", dispSettings.rotation == 3 ? "selected" : "");
 
   // Display power
-  page.replace("%FMINS%", String(dpSettings.finishDisplayMins));
-  page.replace("%KEEPON%", dpSettings.keepDisplayOn ? "checked" : "");
-  page.replace("%CLOCK%", dpSettings.showClockAfterFinish ? "checked" : "");
+  // After-print dropdown: determine which option is selected
+  {
+    uint16_t fm = dpSettings.finishDisplayMins;
+    bool keepon = dpSettings.keepDisplayOn;
+    bool isPreset = (!keepon && (fm == 0 || fm == 1 || fm == 3 || fm == 5 || fm == 10));
+    page.replace("%AP_CLOCK0%", (!keepon && fm == 0) ? "selected" : "");
+    page.replace("%AP_F1%",     (!keepon && fm == 1) ? "selected" : "");
+    page.replace("%AP_F3%",     (!keepon && fm == 3) ? "selected" : "");
+    page.replace("%AP_F5%",     (!keepon && fm == 5) ? "selected" : "");
+    page.replace("%AP_F10%",    (!keepon && fm == 10) ? "selected" : "");
+    page.replace("%AP_CUSTOM%", (!keepon && !isPreset && fm > 0) ? "selected" : "");
+    page.replace("%AP_KEEPON%", keepon ? "selected" : "");
+    page.replace("%CUSTOM_DISP%", (!keepon && !isPreset && fm > 0) ? "block" : "none");
+    page.replace("%FMINS%", String(fm));
+  }
+  page.replace("%DACK%", dpSettings.doorAckEnabled ? "checked" : "");
   page.replace("%ABAR%", dispSettings.animatedBar ? "checked" : "");
   page.replace("%PONG%", dispSettings.pongClock ? "checked" : "");
   page.replace("%SLBL%", dispSettings.smallLabels ? "checked" : "");
@@ -930,6 +1351,8 @@ static String processTemplate(const String& html) {
   replaceGaugeColors(page, "CFN", dispSettings.chamberFan);
 
   page.replace("%DBGLOG%", mqttDebugLog ? "checked" : "");
+  page.replace("%FW_VER%", FW_VERSION);
+  page.replace("%BOARD%", BOARD_VARIANT);
 
   if (st.connected) {
     page.replace("%STATUS_CLASS%", "status status-ok");
@@ -952,6 +1375,7 @@ static String processTemplate(const String& html) {
   page.replace("%BTN_OFF%", buttonType == BTN_DISABLED ? "selected" : "");
   page.replace("%BTN_PUSH%", buttonType == BTN_PUSH ? "selected" : "");
   page.replace("%BTN_TOUCH%", buttonType == BTN_TOUCH ? "selected" : "");
+  page.replace("%BTN_SCREEN%", buttonType == BTN_TOUCHSCREEN ? "selected" : "");
   page.replace("%BTN_PIN%", String(buttonPin));
 
   // Buzzer settings
@@ -961,7 +1385,49 @@ static String processTemplate(const String& html) {
   page.replace("%BUZ_QS%", String(buzzerSettings.quietStartHour));
   page.replace("%BUZ_QE%", String(buzzerSettings.quietEndHour));
 
-  return page;
+  // Tasmota power monitoring
+  page.replace("%TSM_EN%", tasmotaSettings.enabled ? "checked" : "");
+  page.replace("%TSM_IP%", tasmotaSettings.ip);
+  page.replace("%TSM_DM0%", tasmotaSettings.displayMode == 0 ? "checked" : "");
+  page.replace("%TSM_DM1%", tasmotaSettings.displayMode == 1 ? "checked" : "");
+  // Tasmota slot dropdown (dynamic, based on configured printers)
+  {
+    String slotOpts;
+    slotOpts += "<option value=\"255\"";
+    if (tasmotaSettings.assignedSlot == 255) slotOpts += " selected";
+    slotOpts += ">Any printer</option>";
+    for (uint8_t i = 0; i < MAX_ACTIVE_PRINTERS; i++) {
+      if (!isPrinterConfigured(i)) continue;
+      slotOpts += "<option value=\"";
+      slotOpts += String(i);
+      slotOpts += "\"";
+      if (tasmotaSettings.assignedSlot == i) slotOpts += " selected";
+      slotOpts += ">";
+      const char* nm = printers[i].config.name;
+      if (nm[0] != '\0') slotOpts += nm;
+      else { slotOpts += "Printer "; slotOpts += String(i + 1); }
+      slotOpts += "</option>";
+    }
+    page.replace("%TSM_SLOT_OPTIONS%", slotOpts);
+  }
+  // Tasmota poll interval dropdown
+  {
+    static const uint8_t intervals[] = {10, 15, 20, 30, 60};
+    static const char* const labels[] = {"10 seconds", "15 seconds", "20 seconds", "30 seconds", "60 seconds"};
+    uint8_t cur = tasmotaSettings.pollInterval > 0 ? tasmotaSettings.pollInterval : 10;
+    String piOpts;
+    for (int i = 0; i < 5; i++) {
+      piOpts += "<option value=\"";
+      piOpts += String(intervals[i]);
+      piOpts += "\"";
+      if (cur == intervals[i]) piOpts += " selected";
+      piOpts += ">";
+      piOpts += labels[i];
+      piOpts += "</option>";
+    }
+    page.replace("%TSM_PI_OPTIONS%", piOpts);
+  }
+
 }
 
 // ---------------------------------------------------------------------------
@@ -981,10 +1447,16 @@ static void readGaugeColorsFromForm(const char* prefix, GaugeColors& gc) {
 //  Read display settings from form args
 // ---------------------------------------------------------------------------
 static void readDisplayFromForm() {
-  if (server.hasArg("bright")) {
-    brightness = server.arg("bright").toInt();
-    setBacklight(brightness);
-  }
+  if (server.hasArg("bright")) brightness = server.arg("bright").toInt();
+  // Night mode
+  dpSettings.nightModeEnabled = server.hasArg("nighten");
+  if (server.hasArg("nstart")) dpSettings.nightStartHour = server.arg("nstart").toInt();
+  if (server.hasArg("nend"))   dpSettings.nightEndHour = server.arg("nend").toInt();
+  if (server.hasArg("nbright")) dpSettings.nightBrightness = server.arg("nbright").toInt();
+  if (server.hasArg("ssbright")) dpSettings.screensaverBrightness = server.arg("ssbright").toInt();
+  // Apply brightness after all brightness-related values are parsed
+  setBacklight(getEffectiveBrightness());
+
   if (server.hasArg("rotation")) {
     uint8_t rot = server.arg("rotation").toInt();
     if (rot <= 3) dispSettings.rotation = rot;
@@ -1004,9 +1476,14 @@ static void readDisplayFromForm() {
   }
   dpSettings.keepDisplayOn = server.hasArg("keepon");
   dpSettings.showClockAfterFinish = server.hasArg("clock");
+  dpSettings.doorAckEnabled = server.hasArg("dack");
   dispSettings.animatedBar = server.hasArg("abar");
   dispSettings.pongClock = server.hasArg("pong");
   dispSettings.smallLabels = server.hasArg("slbl");
+  if (server.hasArg("cydextra")) {
+    uint8_t mode = server.arg("cydextra").toInt();
+    if (mode <= 1) dispSettings.cydExtraMode = mode;
+  }
 
   // Clock settings (timezone, 24h)
   if (server.hasArg("tz")) {
@@ -1019,6 +1496,10 @@ static void readDisplayFromForm() {
     }
   }
   netSettings.use24h = server.hasArg("use24h");
+  if (server.hasArg("datefmt")) {
+    int df = server.arg("datefmt").toInt();
+    if (df >= 0 && df <= 5) netSettings.dateFormat = (uint8_t)df;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1026,10 +1507,12 @@ static void readDisplayFromForm() {
 // ---------------------------------------------------------------------------
 static void handleRoot() {
   if (isAPMode()) {
+    server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     server.send(200, "text/html", FPSTR(PAGE_AP_HTML));
   } else {
-    String html = FPSTR(PAGE_HTML);
-    server.send(200, "text/html", processTemplate(html));
+    String page = FPSTR(PAGE_HTML);
+    processTemplate(page);
+    server.send(200, "text/html", page);
   }
 }
 
@@ -1120,7 +1603,8 @@ static void handleSaveWifi() {
   if (server.hasArg("net_gw"))  strlcpy(netSettings.gateway, server.arg("net_gw").c_str(), sizeof(netSettings.gateway));
   if (server.hasArg("net_sn"))  strlcpy(netSettings.subnet, server.arg("net_sn").c_str(), sizeof(netSettings.subnet));
   if (server.hasArg("net_dns")) strlcpy(netSettings.dns, server.arg("net_dns").c_str(), sizeof(netSettings.dns));
-  netSettings.showIPAtStartup = server.hasArg("showip");
+  if (server.hasArg("has_showip"))  // full page sends this; AP page doesn't
+    netSettings.showIPAtStartup = server.hasArg("showip");
 
   saveSettings();
 
@@ -1129,13 +1613,33 @@ static void handleSaveWifi() {
   ESP.restart();
 }
 
+// Live brightness preview (no save, just PWM update)
+// Only applies when the main display is active — during clock/screensaver
+// the screensaverBrightness governs the backlight, not the main slider.
+static void handleBrightnessPreview() {
+  if (server.hasArg("val")) {
+    uint8_t val = server.arg("val").toInt();
+    ScreenState scr = getScreenState();
+    if (scr != SCREEN_CLOCK && scr != SCREEN_OFF) {
+      setBacklight(val);
+    }
+  }
+  server.send(200, "text/plain", "OK");
+}
+
 // Apply display settings live (no restart)
 static void handleApply() {
+  // Snapshot timezone before parsing — only re-init NTP if it changes.
+  // configTzTime() resets the SNTP sync status, which causes getLocalTime()
+  // to return false for up to 60s, blanking the clock screen unnecessarily.
+  char prevTz[sizeof(netSettings.timezoneStr)];
+  strlcpy(prevTz, netSettings.timezoneStr, sizeof(prevTz));
   readDisplayFromForm();
   saveSettings();
   applyDisplaySettings();
-  // Re-apply NTP if timezone changed
-  configTzTime(netSettings.timezoneStr, "pool.ntp.org", "time.nist.gov");
+  if (strcmp(netSettings.timezoneStr, prevTz) != 0) {
+    configTzTime(netSettings.timezoneStr, "pool.ntp.org", "time.nist.gov");
+  }
   server.send(200, "text/plain", "OK");
 }
 
@@ -1195,6 +1699,7 @@ static void handleDebug() {
 
   doc["heap"] = ESP.getFreeHeap();
   doc["uptime"] = millis() / 1000;
+  doc["rssi"] = WiFi.RSSI();
   doc["debug_log"] = mqttDebugLog;
 
   String json;
@@ -1207,6 +1712,31 @@ static void handleDebugToggle() {
     mqttDebugLog = (server.arg("on") == "1");
   }
   server.send(200, "text/plain", mqttDebugLog ? "ON" : "OFF");
+}
+
+static void handleToggleSetting() {
+  if (!server.hasArg("key") || !server.hasArg("val")) {
+    server.send(400, "text/plain", "Missing key/val");
+    return;
+  }
+  String key = server.arg("key");
+  bool on = (server.arg("val") == "1");
+
+  if      (key == "keepon")  dpSettings.keepDisplayOn = on;
+  else if (key == "clock")   dpSettings.showClockAfterFinish = on;
+  else if (key == "dack")    dpSettings.doorAckEnabled = on;
+  else if (key == "abar")    dispSettings.animatedBar = on;
+  else if (key == "pong")    dispSettings.pongClock = on;
+  else if (key == "slbl")    dispSettings.smallLabels = on;
+  else if (key == "nighten") dpSettings.nightModeEnabled = on;
+  else if (key == "use24h")  netSettings.use24h = on;
+  else {
+    server.send(400, "text/plain", "Unknown key");
+    return;
+  }
+
+  saveSettings();
+  server.send(200, "text/plain", "OK");
 }
 
 static void handleCloudLogout() {
@@ -1264,7 +1794,7 @@ static void handleSaveRotation() {
   // Button settings
   if (server.hasArg("btntype")) {
     uint8_t bt = server.arg("btntype").toInt();
-    if (bt <= 2) buttonType = (ButtonType)bt;
+    if (bt <= 3) buttonType = (ButtonType)bt;
   }
   if (server.hasArg("btnpin")) {
     uint8_t bp = server.arg("btnpin").toInt();
@@ -1286,6 +1816,28 @@ static void handleSaveRotation() {
   saveBuzzerSettings();
   initBuzzer();
 
+  server.send(200, "application/json", "{\"status\":\"ok\"}");
+}
+
+// ---------------------------------------------------------------------------
+//  Save Tasmota power monitoring settings
+// ---------------------------------------------------------------------------
+static void handleSavePower() {
+  tasmotaSettings.enabled = server.hasArg("tsm_en");
+  if (server.hasArg("tsm_ip"))
+    strlcpy(tasmotaSettings.ip, server.arg("tsm_ip").c_str(), sizeof(tasmotaSettings.ip));
+  if (server.hasArg("tsm_dm"))
+    tasmotaSettings.displayMode = server.arg("tsm_dm").toInt() ? 1 : 0;
+  if (server.hasArg("tsm_slot")) {
+    int slot = server.arg("tsm_slot").toInt();
+    tasmotaSettings.assignedSlot = (slot >= 0 && slot < MAX_ACTIVE_PRINTERS) ? (uint8_t)slot : 255;
+  }
+  if (server.hasArg("tsm_pi")) {
+    int pi = server.arg("tsm_pi").toInt();
+    tasmotaSettings.pollInterval = (pi >= 10 && pi <= 60) ? (uint8_t)pi : 10;
+  }
+  saveSettings();
+  tasmotaInit();
   server.send(200, "application/json", "{\"status\":\"ok\"}");
 }
 
@@ -1347,6 +1899,12 @@ static void handleSettingsExport() {
   dp["finishDisplayMins"] = dpSettings.finishDisplayMins;
   dp["keepDisplayOn"] = dpSettings.keepDisplayOn;
   dp["showClockAfterFinish"] = dpSettings.showClockAfterFinish;
+  dp["doorAckEnabled"] = dpSettings.doorAckEnabled;
+  dp["nightModeEnabled"] = dpSettings.nightModeEnabled;
+  dp["nightStartHour"] = dpSettings.nightStartHour;
+  dp["nightEndHour"] = dpSettings.nightEndHour;
+  dp["nightBrightness"] = dpSettings.nightBrightness;
+  dp["screensaverBrightness"] = dpSettings.screensaverBrightness;
 
   // Network
   JsonObject net = doc["network"].to<JsonObject>();
@@ -1358,6 +1916,7 @@ static void handleSettingsExport() {
   net["timezoneIndex"] = netSettings.timezoneIndex;
   net["timezoneStr"] = netSettings.timezoneStr;
   net["use24h"] = netSettings.use24h;
+  net["dateFormat"] = netSettings.dateFormat;
 
   // Rotation
   JsonObject rot = doc["rotation"].to<JsonObject>();
@@ -1387,6 +1946,14 @@ static void handleSettingsExport() {
 //  Settings import (JSON upload)
 // ---------------------------------------------------------------------------
 static String settingsImportBuf;
+static bool   otaInProgress  = false;
+static bool   otaFirstChunk  = false;
+static String otaError       = "";
+
+// Auto-update (device-initiated, HTTPUpdate from GitHub releases)
+static volatile bool otaAutoInProgress = false;
+static volatile int  otaAutoProgress   = 0;
+static String        otaAutoStatus     = "";
 
 static void gaugeColorsFromJson(JsonObject obj, GaugeColors& gc) {
   if (obj["arc"].is<const char*>())   gc.arc   = htmlToRgb565(obj["arc"]);
@@ -1471,6 +2038,12 @@ static void handleSettingsImportFinish() {
     if (dp["finishDisplayMins"].is<uint16_t>()) dpSettings.finishDisplayMins = dp["finishDisplayMins"].as<uint16_t>();
     if (dp["keepDisplayOn"].is<bool>())         dpSettings.keepDisplayOn = dp["keepDisplayOn"].as<bool>();
     if (dp["showClockAfterFinish"].is<bool>())  dpSettings.showClockAfterFinish = dp["showClockAfterFinish"].as<bool>();
+    if (dp["doorAckEnabled"].is<bool>())        dpSettings.doorAckEnabled = dp["doorAckEnabled"].as<bool>();
+    if (dp["nightModeEnabled"].is<bool>())      dpSettings.nightModeEnabled = dp["nightModeEnabled"].as<bool>();
+    if (dp["nightStartHour"].is<uint8_t>())     dpSettings.nightStartHour = dp["nightStartHour"].as<uint8_t>();
+    if (dp["nightEndHour"].is<uint8_t>())       dpSettings.nightEndHour = dp["nightEndHour"].as<uint8_t>();
+    if (dp["nightBrightness"].is<uint8_t>())    dpSettings.nightBrightness = dp["nightBrightness"].as<uint8_t>();
+    if (dp["screensaverBrightness"].is<uint8_t>()) dpSettings.screensaverBrightness = dp["screensaverBrightness"].as<uint8_t>();
   }
 
   // Network
@@ -1491,6 +2064,7 @@ static void handleSettingsImportFinish() {
       if (migrated) strlcpy(netSettings.timezoneStr, migrated, sizeof(netSettings.timezoneStr));
     }
     if (net["use24h"].is<bool>())             netSettings.use24h = net["use24h"].as<bool>();
+    if (net["dateFormat"].is<uint8_t>())     netSettings.dateFormat = net["dateFormat"].as<uint8_t>();
   }
 
   // Rotation
@@ -1527,9 +2101,180 @@ static void handleSettingsImportFinish() {
   ESP.restart();
 }
 
+// ---------------------------------------------------------------------------
+//  OTA firmware update
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+//  Auto-update: FreeRTOS task that runs HTTPUpdate from a GitHub release URL
+// ---------------------------------------------------------------------------
+static void otaAutoTaskFn(void* param) {
+  String* urlPtr = (String*)param;
+  String url = *urlPtr;
+  delete urlPtr;
+
+  otaAutoStatus = "downloading";
+
+  WiFiClientSecure client;
+  client.setCACertBundle(rootca_crt_bundle_start);
+
+  httpUpdate.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
+  httpUpdate.onProgress([](int cur, int total) {
+    if (total > 0) otaAutoProgress = (int)((cur / (float)total) * 100);
+  });
+
+  t_httpUpdate_return ret = httpUpdate.update(client, url);
+
+  switch (ret) {
+    case HTTP_UPDATE_OK:
+      otaAutoProgress = 100;
+      otaAutoStatus = "done";
+      Serial.println("OTA auto: success, restarting in 4s");
+      delay(4000);   // long enough for JS poller to detect "done" before reboot
+      ESP.restart();
+      break;
+    case HTTP_UPDATE_NO_UPDATES:
+      otaAutoStatus = "already_current";
+      break;
+    case HTTP_UPDATE_FAILED:
+    default: {
+      String err = httpUpdate.getLastErrorString();
+      Serial.printf("OTA auto: failed (%d) %s\n", httpUpdate.getLastError(), err.c_str());
+      // Retry once with setInsecure() in case CA bundle fails
+      if (httpUpdate.getLastError() != -107) {  // -107 = firmware too large, don't retry
+        client.setInsecure();
+        ret = httpUpdate.update(client, url);
+        if (ret == HTTP_UPDATE_OK) {
+          otaAutoProgress = 100;
+          otaAutoStatus = "done";
+          delay(4000);
+          ESP.restart();
+          break;
+        }
+      }
+      otaAutoStatus = "failed: " + err;
+      break;
+    }
+  }
+
+  otaAutoInProgress = false;
+  vTaskDelete(nullptr);
+}
+
+static void handleOtaAuto() {
+  if (otaAutoInProgress) {
+    server.send(409, "application/json", "{\"error\":\"Update already in progress\"}");
+    return;
+  }
+
+  String url = server.arg("url");
+  if (url.length() == 0 ||
+      (!url.startsWith("https://github.com/") &&
+       !url.startsWith("https://objects.githubusercontent.com/"))) {
+    server.send(400, "application/json", "{\"error\":\"Missing or invalid url\"}");
+    return;
+  }
+
+  disconnectBambuMqtt();
+
+  otaAutoInProgress = true;
+  otaAutoProgress   = 0;
+  otaAutoStatus     = "starting";
+
+  String* urlHeap = new String(url);
+  xTaskCreate(otaAutoTaskFn, "otaAuto", 8192, (void*)urlHeap, 5, nullptr);
+
+  server.send(200, "application/json", "{\"status\":\"started\"}");
+}
+
+bool        isOtaAutoInProgress() { return otaAutoInProgress; }
+int         getOtaAutoProgress()  { return otaAutoProgress; }
+const char* getOtaAutoStatus()    { return otaAutoStatus.c_str(); }
+
+static void handleOtaStatus() {
+  JsonDocument doc;
+  doc["inProgress"] = (bool)otaAutoInProgress;
+  doc["progress"]   = (int)otaAutoProgress;
+  doc["status"]     = otaAutoStatus;
+  String json;
+  serializeJson(doc, json);
+  server.send(200, "application/json", json);
+}
+
+static void handleOtaUpload() {
+  HTTPUpload& upload = server.upload();
+
+  if (upload.status == UPLOAD_FILE_START) {
+    otaError = "";
+    otaInProgress = true;
+    otaFirstChunk = true;
+    Serial.printf("OTA: start, file=%s\n", upload.filename.c_str());
+
+    disconnectBambuMqtt();
+
+    if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+      otaError = Update.errorString();
+      Serial.printf("OTA: begin failed: %s\n", otaError.c_str());
+      otaInProgress = false;
+    }
+
+  } else if (upload.status == UPLOAD_FILE_WRITE) {
+    if (!otaInProgress) return;
+
+    // Validate ESP32 magic byte on first chunk
+    if (otaFirstChunk && upload.currentSize > 0) {
+      otaFirstChunk = false;
+      if (upload.buf[0] != 0xE9) {
+        otaError = "Invalid firmware file";
+        Update.abort();
+        otaInProgress = false;
+        return;
+      }
+    }
+
+    if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+      otaError = Update.errorString();
+      Update.abort();
+      otaInProgress = false;
+    }
+
+  } else if (upload.status == UPLOAD_FILE_END) {
+    if (!otaInProgress) return;
+
+    if (Update.end(true)) {
+      Serial.printf("OTA: success, %u bytes\n", upload.totalSize);
+    } else {
+      otaError = Update.errorString();
+      Serial.printf("OTA: end failed: %s\n", otaError.c_str());
+    }
+    otaInProgress = false;
+
+  } else if (upload.status == UPLOAD_FILE_ABORTED) {
+    Update.abort();
+    otaInProgress = false;
+    Serial.println("OTA: aborted");
+  }
+}
+
+static void handleOtaFinish() {
+  if (otaError.length() > 0) {
+    String msg = "{\"status\":\"error\",\"message\":\"" + otaError + "\"}";
+    server.send(400, "application/json", msg);
+    otaError = "";
+    return;
+  }
+  server.send(200, "application/json",
+    "{\"status\":\"ok\",\"message\":\"Update successful. Restarting...\"}");
+  delay(1500);
+  ESP.restart();
+}
+
 // Captive portal: redirect any unknown request to root
+// Android/Samsung check /generate_204 expecting 204 — returning 302 triggers popup.
+// Apple checks /hotspot-detect.html — non-"Success" body triggers popup.
+// Using 302 + no-cache for all unknown paths ensures popup on all platforms.
 static void handleNotFound() {
   if (isAPMode()) {
+    server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     server.sendHeader("Location", "http://192.168.4.1/");
     server.send(302, "text/plain", "");
   } else {
@@ -1540,21 +2285,40 @@ static void handleNotFound() {
 // ---------------------------------------------------------------------------
 //  Init & handle
 // ---------------------------------------------------------------------------
+static void handleCaptiveDetect() {
+  server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  server.sendHeader("Location", "http://192.168.4.1/");
+  server.send(302, "text/plain", "");
+}
+
 void initWebServer() {
+  // Captive portal detection endpoints (must be before onNotFound)
+  server.on("/generate_204", HTTP_GET, handleCaptiveDetect);        // Android/Samsung
+  server.on("/gen_204", HTTP_GET, handleCaptiveDetect);              // Android alt
+  server.on("/connecttest.txt", HTTP_GET, handleCaptiveDetect);      // Windows
+  server.on("/hotspot-detect.html", HTTP_GET, handleCaptiveDetect);  // Apple
+  server.on("/canonical.html", HTTP_GET, handleCaptiveDetect);       // Firefox
+
   server.on("/", HTTP_GET, handleRoot);
   server.on("/save/wifi", HTTP_POST, handleSaveWifi);
   server.on("/save/printer", HTTP_POST, handleSavePrinter);
   server.on("/save/rotation", HTTP_POST, handleSaveRotation);
+  server.on("/save/power", HTTP_POST, handleSavePower);
   server.on("/buzzer/test", HTTP_POST, handleBuzzerTest);
   server.on("/printer/config", HTTP_GET, handlePrinterConfig);
   server.on("/apply", HTTP_POST, handleApply);
+  server.on("/brightness", HTTP_GET, handleBrightnessPreview);
   server.on("/status", HTTP_GET, handleStatus);
   server.on("/reset", HTTP_GET, handleReset);
   server.on("/debug", HTTP_GET, handleDebug);
   server.on("/debug/toggle", HTTP_POST, handleDebugToggle);
+  server.on("/save/toggle", HTTP_POST, handleToggleSetting);
   server.on("/cloud/logout", HTTP_POST, handleCloudLogout);
   server.on("/settings/export", HTTP_GET, handleSettingsExport);
   server.on("/settings/import", HTTP_POST, handleSettingsImportFinish, handleSettingsImportUpload);
+  server.on("/ota/upload", HTTP_POST, handleOtaFinish, handleOtaUpload);
+  server.on("/ota/auto",   HTTP_POST, handleOtaAuto);
+  server.on("/ota/status", HTTP_GET,  handleOtaStatus);
   server.onNotFound(handleNotFound);
   server.begin();
   Serial.println("Web server started on port 80");

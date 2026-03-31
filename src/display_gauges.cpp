@@ -1,6 +1,6 @@
-#ifndef _VARIANT_RAK3112_
 #include "display_gauges.h"
 #include "config.h"
+#include "layout.h"
 #include "settings.h"
 
 // ---------------------------------------------------------------------------
@@ -10,8 +10,8 @@ void drawLedProgressBar(TFT_eSPI& tft, int16_t y, uint8_t progress) {
   uint16_t bg = dispSettings.bgColor;
   uint16_t track = dispSettings.trackColor;
 
-  const int16_t barW = 236;
-  const int16_t barH = 5;
+  const int16_t barW = LY_BAR_W;
+  const int16_t barH = LY_BAR_H;
   const int16_t barX = (SCREEN_W - barW) / 2;
 
   tft.fillRect(barX, y, barW, barH, bg);
@@ -65,8 +65,8 @@ void tickProgressShimmer(TFT_eSPI& tft, int16_t y, uint8_t progress, bool printi
   if (now - shimmerLastMs < SHIMMER_INTERVAL) return;
   shimmerLastMs = now;
 
-  const int16_t barW = 236;
-  const int16_t barH = 5;
+  const int16_t barW = LY_BAR_W;
+  const int16_t barH = LY_BAR_H;
   const int16_t barX = (SCREEN_W - barW) / 2;
   int16_t fillW = (progress * barW) / 100;
   if (fillW < SHIMMER_W + 4) return;  // too small for shimmer
@@ -172,7 +172,8 @@ struct GaugeTextCache {
 static GaugeTextCache gCache[GAUGE_CACHE_SLOTS];
 static uint8_t gCacheCount = 0;
 
-// Find or create cache slot for gauge at (cx, cy)
+// Find or create cache slot for gauge at (cx, cy).
+// If the cache is full, evict the oldest entry (slot 0) to make room.
 static GaugeTextCache* gaugeCache(int16_t cx, int16_t cy) {
   for (uint8_t i = 0; i < gCacheCount; i++) {
     if (gCache[i].cx == cx && gCache[i].cy == cy) return &gCache[i];
@@ -183,7 +184,12 @@ static GaugeTextCache* gaugeCache(int16_t cx, int16_t cy) {
     c->main[0] = '\0'; c->sub[0] = '\0';
     return c;
   }
-  return nullptr;
+  // Cache full: evict oldest slot (index 0), shift remaining entries down
+  memmove(&gCache[0], &gCache[1], (GAUGE_CACHE_SLOTS - 1) * sizeof(GaugeTextCache));
+  GaugeTextCache* c = &gCache[GAUGE_CACHE_SLOTS - 1];
+  c->cx = cx; c->cy = cy;
+  c->main[0] = '\0'; c->sub[0] = '\0';
+  return c;
 }
 
 // Check if text changed; update cache. Returns true if redraw needed.
@@ -368,5 +374,3 @@ void drawFanGauge(TFT_eSPI& tft, int16_t cx, int16_t cy, int16_t radius,
     tft.drawString(label, cx, cy + radius + (sm ? 3 : -1));
   }
 }
-
-#endif

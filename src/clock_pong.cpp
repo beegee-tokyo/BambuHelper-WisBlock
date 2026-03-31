@@ -8,6 +8,7 @@
 
 #include "clock_pong.h"
 #include "config.h"
+#include "layout.h"
 #include "settings.h"
 #include "display_ui.h"
 #include <TFT_eSPI.h>
@@ -15,39 +16,43 @@
 
 extern TFT_eSPI tft;
 
-// ========== Constants ==========
-#define ARK_BRICK_ROWS    5
-#define ARK_BRICK_COLS    10
-#define ARK_BRICK_W       22
-#define ARK_BRICK_H       8
-#define ARK_BRICK_GAP     2
-#define ARK_BRICK_START_X 3
-#define ARK_BRICK_START_Y 28
+// ========== Layout constants (from layout profile) ==========
+#define ARK_BRICK_ROWS    LY_ARK_BRICK_ROWS
+#define ARK_BRICK_COLS    LY_ARK_COLS
+#define ARK_BRICK_W       LY_ARK_BRICK_W
+#define ARK_BRICK_H       LY_ARK_BRICK_H
+#define ARK_BRICK_GAP     LY_ARK_BRICK_GAP
+#define ARK_BRICK_START_X LY_ARK_START_X
+#define ARK_BRICK_START_Y LY_ARK_START_Y
+#define ARK_PADDLE_Y      LY_ARK_PADDLE_Y
+#define ARK_PADDLE_W      LY_ARK_PADDLE_W
+#define ARK_TIME_Y        LY_ARK_TIME_Y
+#define ARK_DATE_Y        LY_ARK_DATE_Y
+#define DIGIT_W           LY_ARK_DIGIT_W
+#define DIGIT_H           LY_ARK_DIGIT_H
+#define COLON_W           LY_ARK_COLON_W
+
+// ========== Gameplay constants (not layout-dependent) ==========
 #define ARK_BALL_SIZE     4
-#define ARK_PADDLE_Y      224
 #define ARK_PADDLE_H      4
-#define ARK_PADDLE_W      30
-#define ARK_TIME_Y        130
-#define ARK_DATE_Y        8
 #define ARK_BALL_SPEED    3.0f
 #define ARK_PADDLE_SPEED  4
 #define ARK_UPDATE_MS     20    // ~50fps
 #define ARK_MAX_FRAGS     20
 #define ARK_TIME_OVERRIDE_MS 60000
 
-// Font 7 digit dimensions (48px tall, variable width)
-#define DIGIT_W  32
-#define DIGIT_H  48
-#define COLON_W  12
-
-// Brick colors per row (classic Arcanoid rainbow)
-static const uint16_t brickColors[ARK_BRICK_ROWS] = {
+// Brick colors per row (classic Arcanoid rainbow).
+// BRICK_COLOR_COUNT is the authoritative size; ARK_BRICK_ROWS must not exceed it.
+#define BRICK_COLOR_COUNT 5
+static const uint16_t brickColors[BRICK_COLOR_COUNT] = {
   0xF800,  // Red
   0xFD20,  // Orange
   0xFFE0,  // Yellow
   0x07E0,  // Green
   0x001F,  // Blue
 };
+static_assert(ARK_BRICK_ROWS <= BRICK_COLOR_COUNT,
+              "ARK_BRICK_ROWS exceeds brickColors array size");
 
 // ========== Fragment struct ==========
 struct PongFragment {
@@ -63,7 +68,7 @@ static float ballX, ballY, ballVX, ballVY;
 static bool ballActive = false;
 static int prevBallX = -1, prevBallY = -1;
 
-static int paddleX = 120, prevPaddleX = 120;
+static int paddleX = LY_W / 2, prevPaddleX = LY_W / 2;
 
 static bool initialized = false;
 static unsigned long lastUpdateMs = 0;
@@ -234,7 +239,7 @@ static void updatePaddle() {
     target = (int)ballX;
   } else {
     // Ball going up - drift toward center for variety
-    target = 120;
+    target = LY_W / 2;
   }
   if (paddleX < target - 2) paddleX += ARK_PADDLE_SPEED;
   else if (paddleX > target + 2) paddleX -= ARK_PADDLE_SPEED;
@@ -321,7 +326,7 @@ static void updateFragments() {
       frags[i].active = false;
       continue;
     }
-    tft.fillRect((int)frags[i].x, (int)frags[i].y, 3, 3, brickColors[random(0, ARK_BRICK_ROWS)]);
+    tft.fillRect((int)frags[i].x, (int)frags[i].y, 3, 3, brickColors[random(0, BRICK_COLOR_COUNT)]);
   }
   if (fragTimer == 0) {
     for (int i = 0; i < ARK_MAX_FRAGS; i++) {
@@ -526,14 +531,18 @@ void tickPongClock() {
   {
   const char* days[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
   char dateStr[20];
+    if (netSettings.use24h)
   snprintf(dateStr, sizeof(dateStr), "%s %02d.%02d.%04d",
            days[now.tm_wday], now.tm_mday, now.tm_mon + 1, now.tm_year + 1900);
+    else
+      snprintf(dateStr, sizeof(dateStr), "%s %02d/%02d/%04d",
+               days[now.tm_wday], now.tm_mon + 1, now.tm_mday, now.tm_year + 1900);
     if (strcmp(dateStr, prevDateStr) != 0) {
       tft.setTextFont(2);
       tft.setTextSize(1);
       tft.setTextDatum(TC_DATUM);
       tft.setTextColor(TFT_CYAN, TFT_BLACK);
-      tft.fillRect(40, ARK_DATE_Y, 160, 16, TFT_BLACK);
+      tft.fillRect(LY_ARK_DATE_CLR_X, ARK_DATE_Y, LY_ARK_DATE_CLR_W, 16, TFT_BLACK);
       tft.drawString(dateStr, SCREEN_W / 2, ARK_DATE_Y);
       tft.setTextDatum(TL_DATUM);
       strlcpy(prevDateStr, dateStr, sizeof(prevDateStr));

@@ -15,13 +15,14 @@ NetworkSettings netSettings;
 DisplayPowerSettings dpSettings;
 char cloudEmail[64] = {0};
 
-#ifdef _VARIANT_RAK3112_
+#if defined (DISPLAY_RAK14014)
 ButtonType buttonType = BTN_TOUCH;
 #else
 ButtonType buttonType = BTN_DISABLED;
 #endif
 uint8_t buttonPin = BUTTON_DEFAULT_PIN;
 BuzzerSettings buzzerSettings = { false, BUZZER_DEFAULT_PIN, 0, 0 };
+TasmotaSettings tasmotaSettings = { false, "", 0, 30, 255 };
 
 static Preferences prefs;
 
@@ -29,6 +30,7 @@ static Preferences prefs;
 //  RGB565 <-> HTML hex conversion
 // ---------------------------------------------------------------------------
 uint16_t htmlToRgb565(const char* hex) {
+  if (!hex || hex[0] == '\0') return 0;
   // Skip '#' if present
   if (hex[0] == '#') hex++;
   uint32_t rgb = strtoul(hex, nullptr, 16);
@@ -52,6 +54,44 @@ uint16_t bambuColorToRgb565(const char* rrggbbaa) {
     g = (rgba >> 8) & 0xFF;
     b = rgba & 0xFF;
   }
+
+  // --- Saturation & Brightness Boost ---
+  // Bambu Lab's MQTT hex colors are often extremely pastel (washed out),
+  // causing CYD TFT displays to render them with an ugly dithered look.
+  // We boost saturation by pulling the lowest RGB value closer to 0.
+  uint8_t max_val = r;
+  if (g > max_val) max_val = g;
+  if (b > max_val) max_val = b;
+  
+  uint8_t min_val = r;
+  if (g < min_val) min_val = g;
+  if (b < min_val) min_val = b;
+
+  if (max_val > 0 && max_val > min_val) {
+    // Avoid blowing out almost-grey colors (like silver/grey filaments)
+    // Only boost if there is a distinct color (saturation > 10%)
+    if ((max_val - min_val) > (max_val / 10)) {
+       float scale = (float)max_val / (max_val - min_val);
+       float full_r = (r - min_val) * scale;
+       float full_g = (g - min_val) * scale;
+       float full_b = (b - min_val) * scale;
+
+       // Blend 65% towards fully saturated color to make it pop
+       float blend = 0.65f;
+       r = (uint8_t)(r + (full_r - r) * blend);
+       g = (uint8_t)(g + (full_g - g) * blend);
+       b = (uint8_t)(b + (full_b - b) * blend);
+    }
+  }
+
+  // Boost global brightness of the color so it's not too dark on the TFT
+  if (max_val > 0 && max_val < 220) {
+    float b_scale = 220.0f / max_val;
+    r = (uint8_t)(r * b_scale);
+    g = (uint8_t)(g * b_scale);
+    b = (uint8_t)(b * b_scale);
+  }
+
   return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
 }
 void rgb565ToHtml(uint16_t c, char* buf) {
@@ -71,6 +111,7 @@ void defaultDisplaySettings(DisplaySettings& ds) {
   ds.animatedBar = true;
   ds.pongClock = false;
   ds.smallLabels = false;
+  ds.cydExtraMode = 0;
 
   // Progress: green arc, green label, white value
   ds.progress = { CLR_GREEN, CLR_GREEN, CLR_TEXT };
@@ -165,6 +206,8 @@ void loadSettings() {
   dispSettings.animatedBar = prefs.getBool("dsp_abar", def.animatedBar);
   dispSettings.pongClock = prefs.getBool("dsp_pong", def.pongClock);
   dispSettings.smallLabels = prefs.getBool("dsp_slbl", def.smallLabels);
+  dispSettings.cydExtraMode = prefs.getUChar("dsp_cydex", 0);
+  dispSettings.cydExtraMode = 0;  // temporary: force AMS-only on CYD
 
   loadGaugeColors("gc_prg", dispSettings.progress, def.progress);
   loadGaugeColors("gc_noz", dispSettings.nozzle, def.nozzle);
@@ -184,7 +227,16 @@ void loadSettings() {
   String tzStr = prefs.getString("net_tzstr", "");
   if (tzStr.length() > 0) {
     strlcpy(netSettings.timezoneStr, tzStr.c_str(), sizeof(netSettings.timezoneStr));
-    netSettings.timezoneIndex = prefs.getUChar("net_tzidx", 3); // default: CET
+    // Re-resolve index from TZ string (handles database reordering across updates)
+    size_t cnt;
+    const TimezoneRegion* tz = getSupportedTimezones(&cnt);
+    netSettings.timezoneIndex = 14; // default: CET (Amsterdam, Berlin, Rome)
+    for (size_t i = 0; i < cnt; i++) {
+      if (strcmp(tz[i].posixString, netSettings.timezoneStr) == 0) {
+        netSettings.timezoneIndex = (uint8_t)i;
+        break;
+      }
+    }
   } else {
     // Migration: convert old gmtOffsetMin to POSIX string
     int16_t oldOffset = prefs.getShort("net_tz", 60);
@@ -197,24 +249,36 @@ void loadSettings() {
     // Find matching index in database
     size_t count;
     const TimezoneRegion* regions = getSupportedTimezones(&count);
-    netSettings.timezoneIndex = 3; // default: CET
+    netSettings.timezoneIndex = 14; // default: CET (Amsterdam, Berlin, Rome)
     for (size_t i = 0; i < count; i++) {
       if (strcmp(regions[i].posixString, netSettings.timezoneStr) == 0) {
         netSettings.timezoneIndex = (uint8_t)i;
         break;
       }
     }
-    // Save new format so migration only happens once
+    // Save new format so migration only happens once.
+    // prefs is open read-only here, so reopen in write mode for migration.
+    prefs.end();
+    prefs.begin(NVS_NAMESPACE, false);
     prefs.putString("net_tzstr", netSettings.timezoneStr);
     prefs.putUChar("net_tzidx", netSettings.timezoneIndex);
+    prefs.end();
+    prefs.begin(NVS_NAMESPACE, true);  // back to read-only for remaining loads
     Serial.printf("Timezone migrated from offset %d -> %s\n", oldOffset, netSettings.timezoneStr);
   }
   netSettings.use24h = prefs.getBool("net_24h", true);
+  netSettings.dateFormat = prefs.getUChar("net_datefmt", 0);
 
   // Display power settings
   dpSettings.finishDisplayMins = prefs.getUShort("dp_fmins", 3);
   dpSettings.keepDisplayOn = prefs.getBool("dp_keepon", false);
   dpSettings.showClockAfterFinish = prefs.getBool("dp_clock", true);
+  dpSettings.doorAckEnabled = prefs.getBool("dp_dack", false);
+  dpSettings.nightModeEnabled = prefs.getBool("dp_night", false);
+  dpSettings.nightStartHour = prefs.getUChar("dp_nstart", 22);
+  dpSettings.nightEndHour = prefs.getUChar("dp_nend", 7);
+  dpSettings.nightBrightness = prefs.getUChar("dp_nbright", 30);
+  dpSettings.screensaverBrightness = prefs.getUChar("dp_ssbright", 30);
 
   // Rotation settings (multi-printer)
   rotState.mode = (RotateMode)prefs.getUChar("rot_mode", ROTATE_SMART);
@@ -225,7 +289,11 @@ void loadSettings() {
   rotState.lastRotateMs = 0;
 
   // Button settings
+#ifdef DISPLAY_CYD
+  buttonType = (ButtonType)prefs.getUChar("btn_type", BTN_TOUCHSCREEN);
+#else
   buttonType = (ButtonType)prefs.getUChar("btn_type", BTN_DISABLED);
+#endif
   buttonPin = prefs.getUChar("btn_pin", BUTTON_DEFAULT_PIN);
 
   // Buzzer settings
@@ -236,6 +304,13 @@ void loadSettings() {
 
   // Cloud email (display only)
   strlcpy(cloudEmail, prefs.getString("cl_email", "").c_str(), sizeof(cloudEmail));
+
+  // Tasmota power monitoring
+  tasmotaSettings.enabled = prefs.getBool("tsm_en", false);
+  strlcpy(tasmotaSettings.ip, prefs.getString("tsm_ip", "").c_str(), sizeof(tasmotaSettings.ip));
+  tasmotaSettings.displayMode = prefs.getUChar("tsm_dm", 0);
+  tasmotaSettings.pollInterval = prefs.getUChar("tsm_pi", 10);
+  tasmotaSettings.assignedSlot = prefs.getUChar("tsm_slot", 255);
 
   prefs.end();
 }
@@ -262,6 +337,7 @@ void saveSettings() {
   prefs.putBool("dsp_abar", dispSettings.animatedBar);
   prefs.putBool("dsp_pong", dispSettings.pongClock);
   prefs.putBool("dsp_slbl", dispSettings.smallLabels);
+  prefs.putUChar("dsp_cydex", dispSettings.cydExtraMode);
 
   saveGaugeColors("gc_prg", dispSettings.progress);
   saveGaugeColors("gc_noz", dispSettings.nozzle);
@@ -280,11 +356,25 @@ void saveSettings() {
   prefs.putString("net_tzstr", netSettings.timezoneStr);
   prefs.putUChar("net_tzidx", netSettings.timezoneIndex);
   prefs.putBool("net_24h", netSettings.use24h);
+  prefs.putUChar("net_datefmt", netSettings.dateFormat);
 
   // Display power settings
   prefs.putUShort("dp_fmins", dpSettings.finishDisplayMins);
   prefs.putBool("dp_keepon", dpSettings.keepDisplayOn);
   prefs.putBool("dp_clock", dpSettings.showClockAfterFinish);
+  prefs.putBool("dp_dack", dpSettings.doorAckEnabled);
+  prefs.putBool("dp_night", dpSettings.nightModeEnabled);
+  prefs.putUChar("dp_nstart", dpSettings.nightStartHour);
+  prefs.putUChar("dp_nend", dpSettings.nightEndHour);
+  prefs.putUChar("dp_nbright", dpSettings.nightBrightness);
+  prefs.putUChar("dp_ssbright", dpSettings.screensaverBrightness);
+
+  // Tasmota power monitoring
+  prefs.putBool("tsm_en", tasmotaSettings.enabled);
+  prefs.putString("tsm_ip", tasmotaSettings.ip);
+  prefs.putUChar("tsm_dm", tasmotaSettings.displayMode);
+  prefs.putUChar("tsm_pi", tasmotaSettings.pollInterval);
+  prefs.putUChar("tsm_slot", tasmotaSettings.assignedSlot);
 
   prefs.end();
 }
@@ -347,6 +437,14 @@ void saveBuzzerSettings() {
 }
 
 void resetSettings() {
+  // Clear sensitive data from RAM before wiping NVS
+  memset(wifiPass, 0, sizeof(wifiPass));
+  memset(cloudEmail, 0, sizeof(cloudEmail));
+  for (int i = 0; i < MAX_PRINTERS; i++) {
+    memset(printers[i].config.accessCode, 0, sizeof(printers[i].config.accessCode));
+    memset(printers[i].config.cloudUserId, 0, sizeof(printers[i].config.cloudUserId));
+  }
+
   prefs.begin(NVS_NAMESPACE, false);
   prefs.clear();
   prefs.end();
