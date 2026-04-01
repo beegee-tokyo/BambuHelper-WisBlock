@@ -115,7 +115,8 @@ def on_connect(client, userdata, flags, rc):
         diag["subscribed"] = True
         print(f"  [SUBSCRIBE] {TOPIC_REPORT}")
         pushall = json.dumps({
-            "pushing": {"sequence_id": "1", "command": "pushall"}
+            "pushing": {"sequence_id": "1", "command": "pushall",
+                        "version": 1, "push_target": 1}
         })
         client.publish(TOPIC_REQUEST, pushall, qos=0)
         diag["pushall_sent"] = True

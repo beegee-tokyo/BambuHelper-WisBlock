@@ -296,6 +296,7 @@ static void drawWiFiConnected() {
 // ---------------------------------------------------------------------------
 //  Screen: OTA firmware update in progress
 // ---------------------------------------------------------------------------
+#ifdef ENABLE_OTA_AUTO
 #include "web_server.h"
 static void drawOtaUpdate() {
   tft.setTextDatum(MC_DATUM);
@@ -334,6 +335,7 @@ static void drawOtaUpdate() {
   tft.setTextColor(CLR_ORANGE, CLR_BG);
   tft.drawString("Do not power off", SCREEN_W / 2, SCREEN_H / 2 + 58);
 }
+#endif // ENABLE_OTA_AUTO
 
 // ---------------------------------------------------------------------------
 //  Screen: Connecting MQTT
@@ -525,6 +527,7 @@ static void drawIdle() {
   static uint32_t idleAltFlipMs       = 0;
   static bool     idlePrevAltShowPower = false;
   static bool     idlePrevTasmotaOnline = false;
+  static float    idlePrevWatts        = -2.0f;
 
   if (tasmotaSettings.enabled && tasmotaSettings.displayMode == 0) {
     if (millis() - idleAltFlipMs > 4000) {
@@ -536,6 +539,7 @@ static void drawIdle() {
     idleAltFlipMs    = 0;
   }
   bool idleTasmotaOnline = tasmotaIsActiveForSlot(rotState.displayIndex);
+  float idleCurWatts = tasmotaGetWatts();
 
   int16_t botCY = scrH - 9;
   bool bottomChanged = wifiChanged ||
@@ -543,9 +547,11 @@ static void drawIdle() {
                        (s.doorOpen != prevState.doorOpen) ||
                        (s.doorSensorPresent != prevState.doorSensorPresent) ||
                        (tasmotaSettings.enabled && (idleAltShowPower != idlePrevAltShowPower ||
-                                                    idleTasmotaOnline != idlePrevTasmotaOnline));
+                                                    idleTasmotaOnline != idlePrevTasmotaOnline ||
+                                                    idleCurWatts != idlePrevWatts));
   idlePrevAltShowPower   = idleAltShowPower;
   idlePrevTasmotaOnline  = idleTasmotaOnline;
+  idlePrevWatts          = idleCurWatts;
 
   if (bottomChanged) {
     tft.fillRect(0, scrH - 18, scrW, 18, CLR_BG);
@@ -1035,9 +1041,9 @@ static void drawPrinting() {
                      etaTm.tm_mon + 1, etaTm.tm_mday, etaH, etaTm.tm_min, ampm);
         } else {
           if (netSettings.use24h)
-            snprintf(etaBuf, sizeof(etaBuf), "ETA: %02d:%02d", etaH, etaTm.tm_min);
+            snprintf(etaBuf, sizeof(etaBuf), "ETA: %02d:%02d - %d m", etaH, etaTm.tm_min, s.remainingMinutes);
           else
-            snprintf(etaBuf, sizeof(etaBuf), "ETA: %d:%02d %s", etaH, etaTm.tm_min, ampm);
+            snprintf(etaBuf, sizeof(etaBuf), "ETA: %d:%02d %s - %d m", etaH, etaTm.tm_min, ampm, s.remainingMinutes);
         }
         tft.setTextFont(4);
         tft.setTextColor(CLR_GREEN, CLR_BG);
@@ -1064,6 +1070,7 @@ static void drawPrinting() {
   static uint32_t altFlipMs       = 0;
   static bool     prevAltShowPower = false;
   static bool     prevTasmotaOnline = false;
+  static float    prevWatts        = -2.0f;
 
   if (tasmotaSettings.enabled && tasmotaSettings.displayMode == 0) {
     if (millis() - altFlipMs > 4000) {
@@ -1075,6 +1082,7 @@ static void drawPrinting() {
     altFlipMs    = 0;
   }
   bool tasmotaOnline = tasmotaIsActiveForSlot(rotState.displayIndex);
+  float curWatts = tasmotaGetWatts();
 
   bool showingWifi = !(s.ams.present && s.ams.activeTray < AMS_MAX_TRAYS && s.ams.trays[s.ams.activeTray].present)
                   && !(s.ams.vtPresent && s.ams.activeTray == 254);
@@ -1086,9 +1094,11 @@ static void drawPrinting() {
                        (s.totalLayers != prevState.totalLayers) ||
                        (s.ams.activeTray != prevState.ams.activeTray) ||
                        (showingWifi && s.wifiSignal != prevState.wifiSignal) ||
-                       (tasmotaSettings.enabled && (altShowPower != prevAltShowPower || tasmotaOnline != prevTasmotaOnline));
+                       (tasmotaSettings.enabled && (altShowPower != prevAltShowPower || tasmotaOnline != prevTasmotaOnline ||
+                                                    curWatts != prevWatts));
   prevAltShowPower  = altShowPower;
   prevTasmotaOnline = tasmotaOnline;
+  prevWatts         = curWatts;
 
   if (bottomChanged) {
     tft.fillRect(0, eff_botY, SCREEN_W, eff_botH, CLR_BG);
@@ -1420,9 +1430,11 @@ void updateDisplay() {
       drawConnectingMQTT();
       break;
 
+#ifdef ENABLE_OTA_AUTO
     case SCREEN_OTA_UPDATE:
       drawOtaUpdate();
       break;
+#endif
 
     case SCREEN_IDLE:
       drawIdle();

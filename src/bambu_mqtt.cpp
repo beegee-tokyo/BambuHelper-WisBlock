@@ -143,7 +143,8 @@ static void requestPushall(MqttConn& c) {
 
   char payload[128];
   snprintf(payload, sizeof(payload),
-           "{\"pushing\":{\"sequence_id\":\"%u\",\"command\":\"pushall\"}}",
+           "{\"pushing\":{\"sequence_id\":\"%u\",\"command\":\"pushall\","
+           "\"version\":1,\"push_target\":1}}",
            c.pushallSeqId++);
 
   MQTT_LOG("[%d] pushall -> %s", c.slotIndex, topic);

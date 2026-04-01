@@ -11,9 +11,12 @@ Beta support for CYD 320x240 displays is also available.
 | Connection Mode | Printers | How it connects |
 |---|---|---|
 | **LAN Direct** | P1P, P1S, X1, X1C, X1E, A1, A1 Mini | Local MQTT via printer IP + LAN access code |
+| **LAN Direct (Developer Mode)** | H2S, H2C, H2D | LAN-only mode + Developer Mode required - see note below |
 | **Bambu Cloud (All printers)** | Any Bambu printer | Cloud MQTT via access token - no LAN mode needed |
 
-> **Tip:** Use "Bambu Cloud (All printers)" if you don't want to enable LAN mode on your printer (for example to keep Bambu Handy working), if your ESP32 is on a different network than the printer, or if your printer only supports cloud mode (H2C, H2D, H2S, P2S).
+> **H2 series LAN mode:** H2S, H2C, and H2D printers require both **LAN-only mode** and **Developer Mode** enabled in printer settings for local MQTT to work. Without Developer Mode, the printer accepts connections but does not respond to status requests. If you prefer not to enable Developer Mode, use Bambu Cloud mode instead.
+
+> **Tip:** Use "Bambu Cloud (All printers)" if you don't want to enable LAN/Developer mode on your printer (for example to keep Bambu Handy working), if your ESP32 is on a different network than the printer, or if your printer only supports cloud mode (P2S).
 
 ### Cloud Mode Security Notice
 
@@ -78,20 +81,34 @@ Optional case seen on picture (for ST7789 (240x240) display): https://makerworld
 
 ### Default Wiring
 
-| Display Pin ST7789 (240x240) | ESP32-S3 GPIO |
-|---|---|
-| MOSI (SDA) | 11 |
-| SCLK (SCL) | 12 |
-| CS | 10 |
-| DC | 9 |
-| RST | 8 |
-| BL | 13 |
-| GND | GND |
-| VCC | 3.3V |
+| Display Pin ST7789 (240x240) | ESP32-S3 GPIO | ESP32-C3 GPIO |
+|---|---|---|
+| MOSI (SDA) | 11 | 20 |
+| SCLK (SCL) | 12 | 21 |
+| CS | 10 | 6 |
+| DC | 9 | 7 |
+| RST | 8 | 10 |
+| BL | 13 | 5 |
+| GND | GND | GND |
+| VCC | 3.3V | 3.3V |
 
 Adjust pin assignments in `platformio.ini` `build_flags` to match your wiring.
 
 Touch TTP223 button is optional. It is used to switch between printers. You may also use a standard push button and connect it between pin 4 and GND, then pick the correct button type in the web interface under Multi-Printer support.
+
+### Optional Touch Sensor / Button Wiring
+
+A button or touch sensor is optional. It cycles between printers and wakes the display from sleep. Configure the type and GPIO in the web interface under **Multi-Printer**.
+
+**TTP223 capacitive touch sensor:**
+
+| TTP223 Pin | ESP32-S3 GPIO | ESP32-C3 GPIO |
+|---|---|---|
+| `VCC` | `3.3V` | `3.3V` |
+| `GND` | `GND` | `GND` |
+| `SIG` | `GPIO 4` | `GPIO 4` |
+
+**Standard push button:** connect one leg to `GPIO 4` and the other to `GND`. The internal pull-up is enabled automatically. Select **Push Button** in the web interface.
 
 ### Optional Buzzer Wiring
 
@@ -99,11 +116,13 @@ The buzzer is completely optional. If you do not connect one, BambuHelper works 
 
 Use a **passive buzzer** and connect it like this:
 
-| Buzzer Pin | ESP32 GPIO |
-|---|---|
-| `+` / `SIG` | `GPIO 5` by default |
-| `-` / `GND` | `GND` |
+| Buzzer Pin | ESP32-S3 GPIO | ESP32-C3 GPIO |
+|---|---|---|
+| `+` / `SIG` | `GPIO 5` | `GPIO 3` |
+| `-` / `GND` | `GND` | `GND` |
 
+> **Note:** The firmware default buzzer pin is `GPIO 5` on both ESP32-S3 and ESP32-C3. The table above shows the **recommended wiring**. If you wire an ESP32-C3 buzzer to `GPIO 3`, you must change the buzzer pin to `GPIO 3` in the web interface after the first boot.
+> **Note:** The firmware default buzzer pin is `GPIO 5` on both ESP32-S3 and ESP32-C3. The table above shows the **recommended wiring**. If you wire an ESP32-C3 buzzer to `GPIO 3`, you must change the buzzer pin to `GPIO 3` in the web interface after the first boot.
 You can change the buzzer GPIO later in the web interface under **Buzzer**. The buzzer can be used for print-finished, connected, and error notifications.
 
 ![wiring](img/wiring.png)
@@ -114,7 +133,7 @@ You can change the buzzer GPIO later in the web interface under **Buzzer**. The 
 
 ## Flashing
 
-1. Download the latest `BambuHelper-WebFlasher.bin` from [Releases](../../releases)
+1. Download the latest firmware from [Releases](../../releases). **If you are flashing a new device for the first time**, use the file ending with **-Full** (e.g. `BambuHelper-WebFlasher-v2.5-Full.bin`). The regular (non-Full) file is for OTA updates on devices that already have BambuHelper installed.
 2. Open [ESP Web Flasher](https://espressif.github.io/esptool-js/) in Chrome or Edge
 3. If you are flashing a **CYD**, set **Baudrate** to **115200** before clicking **Connect**. Two or more attempts may be needed - the first one will fail. This applies to **CYD only**.
 4. Connect your ESP32 via USB

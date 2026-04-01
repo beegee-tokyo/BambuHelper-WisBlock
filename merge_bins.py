@@ -101,12 +101,33 @@ def create_ota_binary(out_dir, out_path, board):
 
 
 def merge_binaries(out_dir, out_path, board):
-    """Merge bootloader + partitions + firmware into a single flashable binary."""
+    """Merge bootloader + partitions + boot_app0 + firmware into a single flashable binary."""
     cfg = BOARDS[board]
     build_dir = cfg['build_dir']
     bootloader = os.path.join(build_dir, 'bootloader.bin')
     partitions = os.path.join(build_dir, 'partitions.bin')
     firmware = os.path.join(build_dir, 'firmware.bin')
+
+    # boot_app0.bin initialises the OTA-data partition so the bootloader
+    # knows which app slot to run.  PlatformIO flashes it automatically
+    # during USB upload, but the merged Full binary must include it too.
+    boot_app0 = None
+    for candidate in [
+        os.path.join(build_dir, 'boot_app0.bin'),
+        os.path.expanduser(
+            '~/.platformio/packages/framework-arduinoespressif32/'
+            'tools/partitions/boot_app0.bin'),
+        os.path.join(
+            'C:/', '.platformio', 'packages',
+            'framework-arduinoespressif32',
+            'tools', 'partitions', 'boot_app0.bin'),
+    ]:
+        if os.path.exists(candidate):
+            boot_app0 = candidate
+            break
+    if boot_app0 is None:
+        print("Error: boot_app0.bin not found.")
+        return False
 
     for path in [bootloader, partitions, firmware]:
         if not os.path.exists(path):
@@ -117,6 +138,7 @@ def merge_binaries(out_dir, out_path, board):
 
     bl_offset = cfg['bootloader_offset']
     pt_offset = cfg['partitions_offset']
+    otadata_offset = 0xE000
     fw_offset = cfg['firmware_offset']
 
     with open(out_path, 'wb') as out:
@@ -136,8 +158,16 @@ def merge_binaries(out_dir, out_path, board):
             pt = f.read()
             out.write(pt)
 
-        # Pad to firmware offset
+        # Pad to OTA data offset and write boot_app0.bin
         current = pt_offset + len(pt)
+        out.write(b'\xFF' * (otadata_offset - current))
+
+        with open(boot_app0, 'rb') as f:
+            ota = f.read()
+            out.write(ota)
+
+        # Pad to firmware offset
+        current = otadata_offset + len(ota)
         out.write(b'\xFF' * (fw_offset - current))
 
         with open(firmware, 'rb') as f:

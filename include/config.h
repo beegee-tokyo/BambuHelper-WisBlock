@@ -4,7 +4,7 @@
 // =============================================================================
 //  Firmware version
 // =============================================================================
-#define FW_VERSION          "v2.5Beta2"
+#define FW_VERSION          "v2.5"
 
 // Board variant — injected into the web UI for OTA asset filtering.
 // Normally set via build_flags in platformio.ini; this is a fallback.
@@ -47,7 +47,7 @@
 // =============================================================================
 #define BAMBU_PORT                  8883
 #define BAMBU_USERNAME              "bblp"
-#define BAMBU_BUFFER_SIZE           16384   // 16KB for full pushall
+#define BAMBU_BUFFER_SIZE           40960   // 40KB - H2C with 3 AMS sends ~33KB
 #define BAMBU_RECONNECT_INTERVAL    10000   // 10s between attempts
 #define BAMBU_BACKOFF_PHASE1        5       // first N attempts at normal interval
 #define BAMBU_BACKOFF_PHASE2_MS     60000   // 60s after phase 1 exhausted

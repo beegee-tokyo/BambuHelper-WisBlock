@@ -44,8 +44,7 @@ void initButton() {
   return;
 #endif
 #endif
-  if (buttonType == BTN_DISABLED)
-    return;
+  if (buttonType == BTN_DISABLED)return;
 #if defined(USE_XPT2046)
   if (buttonType == BTN_TOUCHSCREEN) {
     touchSPI.begin(TOUCH_CLK, TOUCH_MISO, TOUCH_MOSI, TOUCH_CS);
