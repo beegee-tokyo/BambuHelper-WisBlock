@@ -10,6 +10,7 @@
 #include "buzzer.h"
 #include "timezones.h"
 #include "tasmota.h"
+#include "clock_mode.h"
 #include <WebServer.h>
 #include <ArduinoJson.h>
 #include <Update.h>
@@ -388,6 +389,10 @@ R"rawliteral(
           <option value="4" %DATEFMT4%>DD MMM YYYY (31 Dec 2025)</option>
           <option value="5" %DATEFMT5%>MMM DD, YYYY (Dec 31, 2025)</option>
         </select>
+        <div class="color-row" style="margin-top:10px">
+          <label>Time color</label><input type="color" id="clk_time" value="%CLK_TIME%">
+          <label>Date color</label><input type="color" id="clk_date" value="%CLK_DATE%">
+        </div>
       </div>
 
       <div style="margin-top:16px;padding-top:12px;border-top:1px solid #30363D">
@@ -953,32 +958,39 @@ function savePower(){
 
 // --- Display ---
 var themes={
-  default:{bg:'#081018',track:'#182028',
+  default:{bg:'#081018',track:'#182028',clkt:'#FFFFFF',clkd:'#C0C0C0',
     prg:{a:'#00FF00',l:'#00FF00',v:'#FFFFFF'},noz:{a:'#FFA500',l:'#FFA500',v:'#FFFFFF'},
     bed:{a:'#00FFFF',l:'#00FFFF',v:'#FFFFFF'},pfn:{a:'#00FFFF',l:'#00FFFF',v:'#FFFFFF'},
-    afn:{a:'#FFA500',l:'#FFA500',v:'#FFFFFF'},cfn:{a:'#00FF00',l:'#00FF00',v:'#FFFFFF'}},
-  mono_green:{bg:'#000800',track:'#0A1A0A',
+    afn:{a:'#FFA500',l:'#FFA500',v:'#FFFFFF'},cfn:{a:'#00FF00',l:'#00FF00',v:'#FFFFFF'},
+    cht:{a:'#00FFFF',l:'#00FFFF',v:'#FFFFFF'},hbk:{a:'#FFA500',l:'#FFA500',v:'#FFFFFF'}},
+  mono_green:{bg:'#000800',track:'#0A1A0A',clkt:'#00FF41',clkd:'#00CC33',
     prg:{a:'#00FF41',l:'#00CC33',v:'#00FF41'},noz:{a:'#00FF41',l:'#00CC33',v:'#00FF41'},
     bed:{a:'#00FF41',l:'#00CC33',v:'#00FF41'},pfn:{a:'#00FF41',l:'#00CC33',v:'#00FF41'},
-    afn:{a:'#00FF41',l:'#00CC33',v:'#00FF41'},cfn:{a:'#00FF41',l:'#00CC33',v:'#00FF41'}},
-  neon:{bg:'#0A0014',track:'#1A0A2E',
+    afn:{a:'#00FF41',l:'#00CC33',v:'#00FF41'},cfn:{a:'#00FF41',l:'#00CC33',v:'#00FF41'},
+    cht:{a:'#00FF41',l:'#00CC33',v:'#00FF41'},hbk:{a:'#00FF41',l:'#00CC33',v:'#00FF41'}},
+  neon:{bg:'#0A0014',track:'#1A0A2E',clkt:'#FF00FF',clkd:'#AA00FF',
     prg:{a:'#FF00FF',l:'#FF00FF',v:'#FFFFFF'},noz:{a:'#FF4400',l:'#FF6600',v:'#FFFFFF'},
     bed:{a:'#00FFFF',l:'#00FFFF',v:'#FFFFFF'},pfn:{a:'#00FF88',l:'#00FF88',v:'#FFFFFF'},
-    afn:{a:'#FFFF00',l:'#FFFF00',v:'#FFFFFF'},cfn:{a:'#FF00FF',l:'#FF00FF',v:'#FFFFFF'}},
-  warm:{bg:'#140A00',track:'#2E1A08',
+    afn:{a:'#FFFF00',l:'#FFFF00',v:'#FFFFFF'},cfn:{a:'#FF00FF',l:'#FF00FF',v:'#FFFFFF'},
+    cht:{a:'#00FFFF',l:'#00FFFF',v:'#FFFFFF'},hbk:{a:'#FF4400',l:'#FF6600',v:'#FFFFFF'}},
+  warm:{bg:'#140A00',track:'#2E1A08',clkt:'#FFEEDD',clkd:'#FFB347',
     prg:{a:'#FFB347',l:'#FFB347',v:'#FFEEDD'},noz:{a:'#FF6347',l:'#FF6347',v:'#FFEEDD'},
     bed:{a:'#FFA500',l:'#FFA500',v:'#FFEEDD'},pfn:{a:'#FFD700',l:'#FFD700',v:'#FFEEDD'},
-    afn:{a:'#FF8C00',l:'#FF8C00',v:'#FFEEDD'},cfn:{a:'#FFB347',l:'#FFB347',v:'#FFEEDD'}},
-  ocean:{bg:'#000A14',track:'#0A1A2E',
+    afn:{a:'#FF8C00',l:'#FF8C00',v:'#FFEEDD'},cfn:{a:'#FFB347',l:'#FFB347',v:'#FFEEDD'},
+    cht:{a:'#FFA500',l:'#FFA500',v:'#FFEEDD'},hbk:{a:'#FF8C00',l:'#FF8C00',v:'#FFEEDD'}},
+  ocean:{bg:'#000A14',track:'#0A1A2E',clkt:'#E0F0FF',clkd:'#00BFFF',
     prg:{a:'#00BFFF',l:'#00BFFF',v:'#E0F0FF'},noz:{a:'#FF7F50',l:'#FF7F50',v:'#E0F0FF'},
     bed:{a:'#4169E1',l:'#4169E1',v:'#E0F0FF'},pfn:{a:'#00CED1',l:'#00CED1',v:'#E0F0FF'},
-    afn:{a:'#48D1CC',l:'#48D1CC',v:'#E0F0FF'},cfn:{a:'#20B2AA',l:'#20B2AA',v:'#E0F0FF'}}
+    afn:{a:'#48D1CC',l:'#48D1CC',v:'#E0F0FF'},cfn:{a:'#20B2AA',l:'#20B2AA',v:'#E0F0FF'},
+    cht:{a:'#4169E1',l:'#4169E1',v:'#E0F0FF'},hbk:{a:'#FF7F50',l:'#FF7F50',v:'#E0F0FF'}}
 };
 
 function applyTheme(name){
   var t=themes[name]; if(!t) return;
   document.getElementById('clr_bg').value=t.bg;
   document.getElementById('clr_track').value=t.track;
+  document.getElementById('clk_time').value=t.clkt;
+  document.getElementById('clk_date').value=t.clkd;
   var g=['prg','noz','bed','pfn','afn','cfn','cht','hbk'];
   for(var i=0;i<g.length;i++){
     var c=t[g[i]];
@@ -986,6 +998,7 @@ function applyTheme(name){
     document.getElementById(g[i]+'_l').value=c.l;
     document.getElementById(g[i]+'_v').value=c.v;
   }
+  applyDisplay();
 }
 
 function applyDisplay(){
@@ -1010,6 +1023,8 @@ function applyDisplay(){
   p.append('datefmt',document.getElementById('datefmt').value);
   p.append('clr_bg',document.getElementById('clr_bg').value);
   p.append('clr_track',document.getElementById('clr_track').value);
+  p.append('clk_time',document.getElementById('clk_time').value);
+  p.append('clk_date',document.getElementById('clk_date').value);
   var g=['prg','noz','bed','pfn','afn','cfn','cht','hbk'];
   for(var i=0;i<g.length;i++){
     p.append(g[i]+'_a',document.getElementById(g[i]+'_a').value);
@@ -1475,6 +1490,10 @@ static void processTemplate(String& page) {
   page.replace("%CLR_BG%", buf);
   rgb565ToHtml(dispSettings.trackColor, buf);
   page.replace("%CLR_TRACK%", buf);
+  rgb565ToHtml(dispSettings.clockTimeColor, buf);
+  page.replace("%CLK_TIME%", buf);
+  rgb565ToHtml(dispSettings.clockDateColor, buf);
+  page.replace("%CLK_DATE%", buf);
 
   // Per-gauge colors
   replaceGaugeColors(page, "PRG", dispSettings.progress);
@@ -1599,6 +1618,8 @@ static void readDisplayFromForm() {
   }
   if (server.hasArg("clr_bg"))    dispSettings.bgColor = htmlToRgb565(server.arg("clr_bg").c_str());
   if (server.hasArg("clr_track")) dispSettings.trackColor = htmlToRgb565(server.arg("clr_track").c_str());
+  if (server.hasArg("clk_time"))  dispSettings.clockTimeColor = htmlToRgb565(server.arg("clk_time").c_str());
+  if (server.hasArg("clk_date"))  dispSettings.clockDateColor = htmlToRgb565(server.arg("clk_date").c_str());
 
   readGaugeColorsFromForm("prg", dispSettings.progress);
   readGaugeColorsFromForm("noz", dispSettings.nozzle);
@@ -1902,6 +1923,7 @@ static void handleToggleSetting() {
 
   saveSettings();
   if (key == "invcol") applyDisplaySettings();
+  if (key == "use24h") { resetClock(); triggerDisplayTransition(); }
   server.send(200, "text/plain", "OK");
 }
 
@@ -2057,6 +2079,8 @@ static void handleSettingsExport() {
   disp["rotation"] = dispSettings.rotation;
   rgb565ToHtml(dispSettings.bgColor, buf);    disp["bgColor"] = String(buf);
   rgb565ToHtml(dispSettings.trackColor, buf); disp["trackColor"] = String(buf);
+  rgb565ToHtml(dispSettings.clockTimeColor, buf); disp["clockTimeColor"] = String(buf);
+  rgb565ToHtml(dispSettings.clockDateColor, buf); disp["clockDateColor"] = String(buf);
   disp["animatedBar"] = dispSettings.animatedBar;
   disp["pongClock"] = dispSettings.pongClock;
   disp["smallLabels"] = dispSettings.smallLabels;
@@ -2207,6 +2231,8 @@ static void handleSettingsImportFinish() {
     if (disp["rotation"].is<uint8_t>())   dispSettings.rotation = disp["rotation"].as<uint8_t>();
     if (disp["bgColor"].is<const char*>())    dispSettings.bgColor = htmlToRgb565(disp["bgColor"]);
     if (disp["trackColor"].is<const char*>()) dispSettings.trackColor = htmlToRgb565(disp["trackColor"]);
+    if (disp["clockTimeColor"].is<const char*>()) dispSettings.clockTimeColor = htmlToRgb565(disp["clockTimeColor"]);
+    if (disp["clockDateColor"].is<const char*>()) dispSettings.clockDateColor = htmlToRgb565(disp["clockDateColor"]);
     if (disp["animatedBar"].is<bool>())       dispSettings.animatedBar = disp["animatedBar"].as<bool>();
     if (disp["pongClock"].is<bool>())         dispSettings.pongClock = disp["pongClock"].as<bool>();
     if (disp["smallLabels"].is<bool>())      dispSettings.smallLabels = disp["smallLabels"].as<bool>();

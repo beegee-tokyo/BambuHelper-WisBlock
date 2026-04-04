@@ -109,6 +109,8 @@ void defaultDisplaySettings(DisplaySettings& ds) {
   ds.smallLabels = false;
   ds.invertColors = false;
   ds.cydExtraMode = 0;
+  ds.clockTimeColor = CLR_TEXT;
+  ds.clockDateColor = CLR_TEXT_DIM;
 
   // Progress: green arc, green label, white value
   ds.progress = { CLR_GREEN, CLR_GREEN, CLR_TEXT };
@@ -236,6 +238,8 @@ void loadSettings() {
   dispSettings.smallLabels = prefs.getBool("dsp_slbl", def.smallLabels);
   dispSettings.invertColors = prefs.getBool("dsp_inv", def.invertColors);
   dispSettings.cydExtraMode = 0;  // extra gauges removed - AMS only on CYD
+  dispSettings.clockTimeColor = prefs.getUShort("dsp_clkt", CLR_TEXT);
+  dispSettings.clockDateColor = prefs.getUShort("dsp_clkd", CLR_TEXT_DIM);
 
   loadGaugeColors("gc_prg", dispSettings.progress, def.progress);
   loadGaugeColors("gc_noz", dispSettings.nozzle, def.nozzle);
@@ -368,6 +372,8 @@ void saveSettings() {
   prefs.putBool("dsp_slbl", dispSettings.smallLabels);
   prefs.putBool("dsp_inv", dispSettings.invertColors);
   prefs.putUChar("dsp_cydex", dispSettings.cydExtraMode);
+  prefs.putUShort("dsp_clkt", dispSettings.clockTimeColor);
+  prefs.putUShort("dsp_clkd", dispSettings.clockDateColor);
 
   saveGaugeColors("gc_prg", dispSettings.progress);
   saveGaugeColors("gc_noz", dispSettings.nozzle);
