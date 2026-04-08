@@ -100,8 +100,8 @@ static bool ensureClients(MqttConn& c) {
     c.tls->setTimeout(15);
   } else {
     // LAN: printers use self-signed certs, skip verification
-  c.tls->setInsecure();
-  c.tls->setTimeout(5);
+    c.tls->setInsecure();
+    c.tls->setTimeout(5);
   }
 
   if (!c.mqtt) {
@@ -590,7 +590,7 @@ static void reconnectConn(MqttConn& c) {
   // TCP reachability test (local mode only)
   if (cfg.mode == CONN_LOCAL) {
     WiFiClient tcp;
-    tcp.setTimeout(3);
+    tcp.setTimeout(1);
     MQTT_LOG("[%d] TCP test to %s:%d...", c.slotIndex, cfg.ip, BAMBU_PORT);
     unsigned long tcpT0 = millis();
     c.diag.tcpOk = tcp.connect(cfg.ip, BAMBU_PORT);
@@ -614,8 +614,8 @@ static void reconnectConn(MqttConn& c) {
     snprintf(clientId, sizeof(clientId), "bblp_%08x%04x",
              (uint32_t)esp_random(), (uint16_t)(esp_random() & 0xFFFF));
   } else {
-  snprintf(clientId, sizeof(clientId), "bambu_%08x_%d",
-           (uint32_t)(ESP.getEfuseMac() & 0xFFFFFFFF), c.slotIndex);
+    snprintf(clientId, sizeof(clientId), "bambu_%08x_%d",
+             (uint32_t)(ESP.getEfuseMac() & 0xFFFFFFFF), c.slotIndex);
   }
 
   unsigned long t0 = millis();
@@ -724,7 +724,6 @@ static void handleConn(MqttConn& c) {
     // Initial pushall: request full status once after connecting.
     // Cloud also gets this — without it, display shows "waiting" until
     // the broker naturally sends a full status (can take minutes).
-
     if (!c.initialPushallSent && c.connectTime > 0 &&
         millis() - c.connectTime > BAMBU_PUSHALL_INITIAL_DELAY) {
       esp_task_wdt_reset();
@@ -736,19 +735,19 @@ static void handleConn(MqttConn& c) {
     // Cloud pushes data automatically; repeated publish to request topic
     // may trigger access_denied (TLS alert 49) on the cloud broker.
     if (!isCloudMode(cfg.mode)) {
-    if (c.initialPushallSent && c.diag.messagesRx == 0 &&
-        millis() - c.lastPushallRequest > 10000) {
-      MQTT_LOG("[%d] No data after pushall, retrying...", c.slotIndex);
-      esp_task_wdt_reset();
-      requestPushall(c);
-    }
+      if (c.initialPushallSent && c.diag.messagesRx == 0 &&
+          millis() - c.lastPushallRequest > 10000) {
+        MQTT_LOG("[%d] No data after pushall, retrying...", c.slotIndex);
+        esp_task_wdt_reset();
+        requestPushall(c);
+      }
 
       if (c.initialPushallSent && c.diag.messagesRx > 0 &&
           millis() - c.lastPushallRequest > BAMBU_PUSHALL_INTERVAL) {
-      esp_task_wdt_reset();
-      requestPushall(c);
+        esp_task_wdt_reset();
+        requestPushall(c);
+      }
     }
-  }
   }
 
   unsigned long staleMs = isCloudMode(cfg.mode) ? BAMBU_STALE_TIMEOUT * 5 : BAMBU_STALE_TIMEOUT;
@@ -764,7 +763,7 @@ static void handleConn(MqttConn& c) {
       } else if (c.stalePushallSentMs == 0 ||
                  millis() - c.stalePushallSentMs > 30000) {
         // Not connected, or recovery pushall sent 30s ago with no response - give up
-      s.printing = false;
+        s.printing = false;
         // Also reset gcodeState - otherwise state machine shows SCREEN_IDLE
         // with "RUNNING" text (2 gauges) instead of SCREEN_PRINTING (6 gauges)
         strlcpy(s.gcodeState, "IDLE", sizeof(s.gcodeState));
@@ -905,9 +904,19 @@ void initBambuMqtt() {
   }
 }
 
+static bool skipReconnectOnce = false;
+
+void deferMqttReconnect() { skipReconnectOnce = true; }
+
 void handleBambuMqtt() {
+  bool skip = skipReconnectOnce;
+  skipReconnectOnce = false;
   for (uint8_t i = 0; i < MAX_ACTIVE_PRINTERS; i++) {
     if (!conns[i].active) continue;
+    // When waking from sleep, skip reconnect attempts this iteration
+    // so the display update is not blocked by TLS/TCP timeouts.
+    // Already-connected sessions still get mqtt->loop().
+    if (skip && !(conns[i].mqtt && conns[i].mqtt->connected())) continue;
     handleConn(conns[i]);
   }
 }
@@ -919,6 +928,7 @@ void resetMqttBackoff() {
   }
   Serial.println("MQTT: backoff reset, reconnecting immediately");
 }
+
 void requestCloudRefresh(uint8_t slot) {
   if (slot >= MAX_ACTIVE_PRINTERS) return;
   MqttConn& c = conns[slot];

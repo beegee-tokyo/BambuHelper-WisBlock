@@ -107,20 +107,6 @@
 #define LY_LAND_FIN_BOT_H    20
 #define LY_LAND_FIN_WIFI_Y   228
 
-// --- Extra gauges zone (mini-gauges for CYD extra area) ---
-// Portrait: between gauge row 2 and ETA (y=190-246)
-#define LY_EXTRA_PORT_Y     190
-#define LY_EXTRA_PORT_H     56
-#define LY_EXTRA_PORT_GR    18     // mini-gauge radius
-#define LY_EXTRA_PORT_GY    214    // mini-gauge center Y
-#define LY_EXTRA_PORT_G1X   70     // first gauge center X
-#define LY_EXTRA_PORT_G2X   170    // second gauge center X
-// Landscape: right sidebar (same area as AMS)
-#define LY_EXTRA_LAND_GR    18     // mini-gauge radius
-#define LY_EXTRA_LAND_GX    280    // center X in sidebar
-#define LY_EXTRA_LAND_G1Y   80     // first gauge center Y
-#define LY_EXTRA_LAND_G2Y   180    // second gauge center Y
-
 // --- AP mode screen (same as default) ---
 #define LY_AP_TITLE_Y     40
 #define LY_AP_SSID_LBL_Y  80
@@ -131,11 +117,16 @@
 #define LY_AP_IP_Y        210
 
 // --- Simple clock (centered in 320px height) ---
-#define LY_CLK_CLEAR_Y   70
-#define LY_CLK_CLEAR_H   200
-#define LY_CLK_TIME_Y    140
-#define LY_CLK_AMPM_Y    175
-#define LY_CLK_DATE_Y    205
+// #define LY_CLK_CLEAR_Y   70
+// #define LY_CLK_CLEAR_H   200
+// #define LY_CLK_TIME_Y    140
+// #define LY_CLK_AMPM_Y    175
+// #define LY_CLK_DATE_Y    205
+#define LY_CLK_CLEAR_Y 50
+#define LY_CLK_CLEAR_H 140
+#define LY_CLK_TIME_Y  100
+#define LY_CLK_AMPM_Y  135
+#define LY_CLK_DATE_Y  155
 
 // --- Pong/Breakout clock ---
 #define LY_ARK_BRICK_ROWS   5
