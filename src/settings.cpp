@@ -14,7 +14,12 @@ DisplaySettings dispSettings;
 NetworkSettings netSettings;
 DisplayPowerSettings dpSettings;
 char cloudEmail[64] = {0};
+
+#if defined (DISPLAY_RAK14014)
+ButtonType buttonType = BTN_TOUCH;
+#else
 ButtonType buttonType = BTN_DISABLED;
+#endif
 uint8_t buttonPin = BUTTON_DEFAULT_PIN;
 BuzzerSettings buzzerSettings = { false, BUZZER_DEFAULT_PIN, 0, 0 };
 TasmotaSettings tasmotaSettings = { false, "", 0, 30, 255 };
@@ -89,7 +94,6 @@ uint16_t bambuColorToRgb565(const char* rrggbbaa) {
 
   return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
 }
-
 void rgb565ToHtml(uint16_t c, char* buf) {
   uint8_t r = ((c >> 11) & 0x1F) * 255 / 31;
   uint8_t g = ((c >> 5) & 0x3F) * 255 / 63;
@@ -278,7 +282,7 @@ void loadSettings() {
     prefs.putBool("tz_migrated", true);
     Serial.printf("[SETTINGS] Migrated timezone: offset %d -> %s\n", oldOffset, tzStr.c_str());
   } else if (!tzStr.isEmpty() && !tzMigrated) {
-    // Recovery: net_tzstr already exists but flag is absent â€” this device ran
+    // Recovery: net_tzstr already exists but flag is absent — this device ran
     // the old migration code and lost power before it could be marked done.
     // Stamp the flag now so future boots skip migration entirely.
     prefs.putBool("tz_migrated", true);
@@ -290,7 +294,7 @@ void loadSettings() {
   {
     size_t cnt;
     const TimezoneRegion* regions = getSupportedTimezones(&cnt);
-    netSettings.timezoneIndex = 14;  // default: CET (Amsterdam, Berlin, Rome)
+    netSettings.timezoneIndex = 14; // default: CET (Amsterdam, Berlin, Rome)
     for (size_t i = 0; i < cnt; i++) {
       if (strcmp(regions[i].posixString, netSettings.timezoneStr) == 0) {
         netSettings.timezoneIndex = (uint8_t)i;
@@ -298,7 +302,6 @@ void loadSettings() {
       }
     }
   }
-
   netSettings.use24h = prefs.getBool("net_24h", true);
   netSettings.dateFormat = prefs.getUChar("net_datefmt", 0);
 
@@ -334,6 +337,7 @@ void loadSettings() {
   buzzerSettings.pin = prefs.getUChar("buz_pin", BUZZER_DEFAULT_PIN);
   buzzerSettings.quietStartHour = prefs.getUChar("buz_qstart", 0);
   buzzerSettings.quietEndHour = prefs.getUChar("buz_qend", 0);
+  buzzerSettings.buttonClick = prefs.getBool("buz_click", false);
 
   // Cloud email (display only)
   strlcpy(cloudEmail, prefs.getString("cl_email", "").c_str(), sizeof(cloudEmail));
@@ -474,6 +478,7 @@ void saveBuzzerSettings() {
   prefs.putUChar("buz_pin", buzzerSettings.pin);
   prefs.putUChar("buz_qstart", buzzerSettings.quietStartHour);
   prefs.putUChar("buz_qend", buzzerSettings.quietEndHour);
+  prefs.putBool("buz_click", buzzerSettings.buttonClick);
   prefs.end();
 }
 

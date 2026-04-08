@@ -1,7 +1,8 @@
-#ifndef LAYOUT_CYD_H
-#define LAYOUT_CYD_H
+#ifndef LAYOUT_RAK3312_H
+#define LAYOUT_RAK3312_H
+// #warning "USING RAK14014"
 
-// Layout profile: ILI9341 240x320 portrait (ESP32-2432S028 "CYD")
+// Layout profile: ST7789 240x320 portrait (RAK14014)
 // MVP: same layout as 240x240 but bottom-anchored elements moved to 320px.
 // The extra ~80px between gauge rows and ETA is intentionally unused for now.
 
@@ -116,11 +117,16 @@
 #define LY_AP_IP_Y        210
 
 // --- Simple clock (centered in 320px height) ---
-#define LY_CLK_CLEAR_Y   70
-#define LY_CLK_CLEAR_H   200
-#define LY_CLK_TIME_Y    140
-#define LY_CLK_AMPM_Y    175
-#define LY_CLK_DATE_Y    205
+// #define LY_CLK_CLEAR_Y   70
+// #define LY_CLK_CLEAR_H   200
+// #define LY_CLK_TIME_Y    140
+// #define LY_CLK_AMPM_Y    175
+// #define LY_CLK_DATE_Y    205
+#define LY_CLK_CLEAR_Y 50
+#define LY_CLK_CLEAR_H 140
+#define LY_CLK_TIME_Y  100
+#define LY_CLK_AMPM_Y  135
+#define LY_CLK_DATE_Y  155
 
 // --- Pong/Breakout clock ---
 #define LY_ARK_BRICK_ROWS   5
@@ -140,4 +146,4 @@
 #define LY_ARK_DATE_CLR_X   40
 #define LY_ARK_DATE_CLR_W   160
 
-#endif // LAYOUT_CYD_H
+#endif // LAYOUT_RAK3312_H

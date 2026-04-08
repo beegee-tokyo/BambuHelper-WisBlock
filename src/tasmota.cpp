@@ -6,11 +6,11 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
-#define TASMOTA_TIMEOUT_MS              1500      // HTTP timeout when plug is known-online
+#define TASMOTA_TIMEOUT_MS        1500      // HTTP timeout when plug is known-online
 #define TASMOTA_TIMEOUT_FAST_MS          700      // shorter timeout once plug is confirmed offline
-#define TASMOTA_STALE_MS               90000UL   // consider offline after 90s without data
+#define TASMOTA_STALE_MS         90000UL   // consider offline after 90s without data
 #define TASMOTA_OFFLINE_RETRY_MS       10000UL   // retry quickly after confirmed offline
-#define TASMOTA_DEFAULT_INTERVAL         10      // seconds, used when pollInterval not set
+#define TASMOTA_DEFAULT_INTERVAL   10      // seconds, used when pollInterval not set
 #define TASMOTA_FAILS_BEFORE_OFFLINE      3      // tolerate a few transient misses before hiding watts
 
 static volatile float    g_watts              = -1.0f;

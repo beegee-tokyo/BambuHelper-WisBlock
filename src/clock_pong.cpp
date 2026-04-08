@@ -210,16 +210,16 @@ static bool overlapsText(int bx, int by) {
 
 static void drawBall() {
   if (prevBallX >= 0) {
-    // Ball passes behind text â€” no erase needed, no damage to repair
+    // Ball passes behind text — no erase needed, no damage to repair
     if (overlapsText(prevBallX, prevBallY)) {
-      // skip â€” ball was never drawn here
+      // skip — ball was never drawn here
     } else {
-      tft.fillRect(prevBallX, prevBallY, ARK_BALL_SIZE, ARK_BALL_SIZE, TFT_BLACK);
+    tft.fillRect(prevBallX, prevBallY, ARK_BALL_SIZE, ARK_BALL_SIZE, TFT_BLACK);
     }
   }
-  // Don't draw ball over time digits â€” it passes behind
+  // Don't draw ball over time digits — it passes behind
   if (!overlapsText((int)ballX, (int)ballY)) {
-    tft.fillRect((int)ballX, (int)ballY, ARK_BALL_SIZE, ARK_BALL_SIZE, TFT_WHITE);
+  tft.fillRect((int)ballX, (int)ballY, ARK_BALL_SIZE, ARK_BALL_SIZE, TFT_WHITE);
   }
   prevBallX = (int)ballX;
   prevBallY = (int)ballY;
@@ -442,8 +442,8 @@ static void drawTime() {
 
       tft.drawChar(digits[i], x, y, 7);
       prevDigits[i] = digits[i];
-      prevDigitY[i] = y;
-    }
+    prevDigitY[i] = y;
+  }
   }
 
   // Colon - blinks, draw only when state changes
@@ -521,7 +521,7 @@ void tickPongClock() {
   // Detect minute change
   if (curMin != lastMinute) { lastMinute = curMin; animTriggered = false; }
 
-  // Trigger digit transition at second 56 â€” all changing digits update
+  // Trigger digit transition at second 56 — all changing digits update
   // at once with a bounce animation (no fragment explosion)
   if (sec >= 56 && !animTriggered) {
     animTriggered = true;
@@ -550,7 +550,7 @@ void tickPongClock() {
   // Draw text on top (repairs any ball/paddle damage via cache invalidation)
   // Date (Font 2, smooth)
   {
-    const char* days[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+  const char* days[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
     const char* months[] = {"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
     char dateStr[28];
     int day = now.tm_mday, mon = now.tm_mon + 1, year = now.tm_year + 1900;

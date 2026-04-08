@@ -590,7 +590,7 @@ static void reconnectConn(MqttConn& c) {
   // TCP reachability test (local mode only)
   if (cfg.mode == CONN_LOCAL) {
     WiFiClient tcp;
-    tcp.setTimeout(3);
+    tcp.setTimeout(1);
     MQTT_LOG("[%d] TCP test to %s:%d...", c.slotIndex, cfg.ip, BAMBU_PORT);
     unsigned long tcpT0 = millis();
     c.diag.tcpOk = tcp.connect(cfg.ip, BAMBU_PORT);
@@ -904,9 +904,19 @@ void initBambuMqtt() {
   }
 }
 
+static bool skipReconnectOnce = false;
+
+void deferMqttReconnect() { skipReconnectOnce = true; }
+
 void handleBambuMqtt() {
+  bool skip = skipReconnectOnce;
+  skipReconnectOnce = false;
   for (uint8_t i = 0; i < MAX_ACTIVE_PRINTERS; i++) {
     if (!conns[i].active) continue;
+    // When waking from sleep, skip reconnect attempts this iteration
+    // so the display update is not blocked by TLS/TCP timeouts.
+    // Already-connected sessions still get mqtt->loop().
+    if (skip && !(conns[i].mqtt && conns[i].mqtt->connected())) continue;
     handleConn(conns[i]);
   }
 }

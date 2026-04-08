@@ -88,6 +88,7 @@ struct BuzzerSettings {
   uint8_t pin;
   uint8_t quietStartHour;   // quiet hours start (0-23), 0 = disabled
   uint8_t quietEndHour;     // quiet hours end (0-23)
+  bool buttonClick;          // play click sound on button press
 };
 
 // Tasmota smart plug power monitoring

@@ -512,6 +512,13 @@ R"rawliteral(
             <input type="number" id="buzqe" min="0" max="23" value="%BUZ_QE%" style="width:60px" placeholder="7">
             <span style="font-size:11px;color:#8B949E">(0-0 = off)</span>
           </div>
+          <div id="buzClickRow" style="display:none;margin-top:8px">
+            <label style="display:flex;align-items:center;gap:6px;font-weight:normal;cursor:pointer">
+              <input type="checkbox" id="buzclick" %BUZ_CLICK%>
+              Click sound when button pressed
+            </label>
+            <p style="font-size:11px;color:#8B949E;margin-top:2px">Audible feedback for capacitive touch buttons</p>
+          </div>
           <button type="button" id="buzTestBtn" class="btn btn-blue" style="margin-top:12px;width:auto;padding:8px 16px"
                   onclick="testBuzzer()">Test: Print Finished</button>
         </div>
@@ -899,12 +906,15 @@ function toggleBtnPin(){
   var v=document.getElementById('btntype').value;
   document.getElementById('btnPinRow').style.display=
     (v==='0'||v==='3')?'none':'block';
+  toggleBuzPin();
 }
 toggleBtnPin();
 
 function toggleBuzPin(){
-  document.getElementById('buzFields').style.display=
-    document.getElementById('buzzen').value==='0'?'none':'block';
+  var buzOn=document.getElementById('buzzen').value!=='0';
+  document.getElementById('buzFields').style.display=buzOn?'block':'none';
+  var btnOn=document.getElementById('btntype').value!=='0';
+  document.getElementById('buzClickRow').style.display=(buzOn&&btnOn)?'block':'none';
 }
 toggleBuzPin();
 
@@ -934,6 +944,7 @@ function saveRotation(){
   p.append('buzpin',document.getElementById('buzpin').value);
   p.append('buzqs',document.getElementById('buzqs').value);
   p.append('buzqe',document.getElementById('buzqe').value);
+  p.append('buzclick',document.getElementById('buzclick').checked?'1':'0');
   fetch('/save/rotation',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:p.toString()})
     .then(function(r){return r.json();})
     .then(function(d){if(d.status==='ok') showToast('Settings saved');})
@@ -1132,7 +1143,7 @@ function startOta(){
   if(!f){showToast('Select a .bin file first');return;}
   if(!f.name.endsWith('.bin')){showToast('File must be .bin');return;}
   if(f.size<32768){showToast('File too small');return;}
-  if(f.size>1310720){showToast('File too large (max 1.25MB)');return;}
+  if(f.size>1835008){showToast('File too large (max 1.75MB)');return;}
   if(!confirm('Upload firmware and restart?')) return;
   var prog=document.getElementById('otaProgress');
   var bar=document.getElementById('otaBar');
@@ -1527,6 +1538,7 @@ static bool resolvePlaceholder(const char* name, String& out) {
   if (strcmp(name, "BUZ_PIN") == 0) { out = String(buzzerSettings.pin); return true; }
   if (strcmp(name, "BUZ_QS") == 0)  { out = String(buzzerSettings.quietStartHour); return true; }
   if (strcmp(name, "BUZ_QE") == 0)  { out = String(buzzerSettings.quietEndHour); return true; }
+  if (strcmp(name, "BUZ_CLICK") == 0) { out = buzzerSettings.buttonClick ? "checked" : ""; return true; }
 
   // --- Tasmota ---
   if (strcmp(name, "TSM_EN") == 0)  { out = tasmotaSettings.enabled ? "checked" : ""; return true; }
@@ -2120,6 +2132,9 @@ static void handleSaveRotation() {
     int qe = server.arg("buzqe").toInt();
     if (qe >= 0 && qe <= 23) buzzerSettings.quietEndHour = qe;
   }
+  if (server.hasArg("buzclick")) {
+    buzzerSettings.buttonClick = (server.arg("buzclick") == "1");
+  }
   saveBuzzerSettings();
   initBuzzer();
 
@@ -2247,6 +2262,7 @@ static void handleSettingsExport() {
   buz["pin"] = buzzerSettings.pin;
   buz["quietStart"] = buzzerSettings.quietStartHour;
   buz["quietEnd"] = buzzerSettings.quietEndHour;
+  buz["buttonClick"] = buzzerSettings.buttonClick;
 
   String json;
   serializeJsonPretty(doc, json);
@@ -2424,6 +2440,7 @@ static void handleSettingsImportFinish() {
       uint8_t qe = buz["quietEnd"].as<uint8_t>();
       if (qe <= 23) buzzerSettings.quietEndHour = qe;
     }
+    if (buz["buttonClick"].is<bool>()) buzzerSettings.buttonClick = buz["buttonClick"].as<bool>();
   }
 
   // Save everything to NVS

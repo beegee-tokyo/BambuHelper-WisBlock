@@ -106,7 +106,7 @@ void initDisplay() {
   Serial.flush();
   tft.init();  // TFT_eSPI configures SPI from build flags
   Serial.println("Display: tft.init() done");
-#if defined(DISPLAY_CYD)
+#if defined(DISPLAY_CYD) || defined(DISPLAY_RAK14014)
   // Clear entire GRAM at rotation 0 first (guarantees all 240x320 pixels
   // are addressed). Without this, rotations 1/3 leave 80px of uninitialized
   // VRAM visible as garbage noise on the extra screen edge.
@@ -147,7 +147,7 @@ void initDisplay() {
 }
 
 void applyDisplaySettings() {
-#if defined(DISPLAY_CYD)
+#if defined(DISPLAY_CYD) || defined(DISPLAY_RAK14014)
   // Pre-clear entire GRAM at rotation 0 to prevent garbage on edges
   tft.setRotation(0);
   tft.fillScreen(TFT_BLACK);
@@ -462,7 +462,7 @@ static void drawIdle() {
   BambuState& s = p.state;
 
   // Effective screen dimensions — idle uses full screen (no AMS sidebar)
-#if defined(DISPLAY_CYD)
+#if defined(DISPLAY_CYD) || defined(DISPLAY_RAK14014)
   const int16_t scrW = (int16_t)tft.width();
   const int16_t scrH = (int16_t)tft.height();
 #else
@@ -555,21 +555,9 @@ static void drawIdle() {
   }
 
   // Bottom status bar: Filament/WiFi | Power | Door
-  static bool     idleAltShowPower    = false;
-  static uint32_t idleAltFlipMs       = 0;
-  static bool     idlePrevAltShowPower = false;
   static bool     idlePrevTasmotaOnline = false;
   static float    idlePrevWatts        = -2.0f;
 
-  if (tasmotaSettings.enabled && tasmotaSettings.displayMode == 0) {
-    if (millis() - idleAltFlipMs > 4000) {
-      idleAltShowPower = !idleAltShowPower;
-      idleAltFlipMs    = millis();
-    }
-  } else {
-    idleAltShowPower = false;
-    idleAltFlipMs    = 0;
-  }
   bool idleTasmotaOnline = tasmotaIsActiveForSlot(rotState.displayIndex);
   float idleCurWatts = tasmotaGetWatts();
 
@@ -578,10 +566,8 @@ static void drawIdle() {
                        (s.ams.activeTray != prevState.ams.activeTray) ||
                        (s.doorOpen != prevState.doorOpen) ||
                        (s.doorSensorPresent != prevState.doorSensorPresent) ||
-                       (tasmotaSettings.enabled && (idleAltShowPower != idlePrevAltShowPower ||
-                                                    idleTasmotaOnline != idlePrevTasmotaOnline ||
+                       (tasmotaSettings.enabled && (idleTasmotaOnline != idlePrevTasmotaOnline ||
                                                     idleCurWatts != idlePrevWatts));
-  idlePrevAltShowPower   = idleAltShowPower;
   idlePrevTasmotaOnline  = idleTasmotaOnline;
   idlePrevWatts          = idleCurWatts;
 
@@ -608,8 +594,8 @@ static void drawIdle() {
     }
 
     // Center: power watts (if Tasmota online)
-    bool showPower = idleTasmotaOnline &&
-                     (tasmotaSettings.displayMode == 1 || idleAltShowPower);
+    // Ready screen has no layer count, so always show power (no alternation)
+    bool showPower = idleTasmotaOnline;
     if (showPower) {
       drawIcon16(tft, cx - 20, botCY - 8, icon_lightning, CLR_YELLOW);
       char wBuf[8];
@@ -636,7 +622,7 @@ static void drawIdle() {
 //  Portrait: horizontal strip between gauges and ETA (y=190-246)
 //  Landscape: vertical strip on right side (x=244-316)
 // ---------------------------------------------------------------------------
-#if defined(DISPLAY_CYD)
+#if defined(DISPLAY_CYD) || defined(DISPLAY_RAK14014)
 
 static bool cydLandscape() {
   return (dispSettings.rotation == 1 || dispSettings.rotation == 3);
@@ -653,6 +639,8 @@ static void drawAmsTrayBar(int16_t x, int16_t y, int16_t w, int16_t h,
   if (tray.present) {
     if (isActive) {
       tft.fillRect(x, y, w, h, TFT_WHITE);
+      tft.fillRect(x - 1, y - 3, w + 2, 3, TFT_GREEN);
+      tft.fillRect(x - 1, y + h, w + 2, 3, TFT_RED);
       tft.fillRect(x + 2, y + 2, w - 4, h - 4, tray.colorRgb565);
     } else {
       tft.drawRect(x, y, w, h, CLR_TEXT_DARK);
@@ -743,7 +731,7 @@ static void drawAmsZone(const BambuState& s, bool force) {
       tft.setTextDatum(TC_DATUM);
       bool sm = dispSettings.smallLabels;
       tft.setTextFont(sm ? 1 : 2);
-      tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
+    tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
       tft.drawString(label, LY_LAND_AMS_X + LY_LAND_AMS_W / 2, gy + barH + 2);
     }
 
@@ -825,7 +813,7 @@ static void drawPrinting() {
   const int16_t gT = LY_GAUGE_T;
 
   // Effective Y positions — landscape on CYD uses 240x240-style positions
-#if defined(DISPLAY_CYD)
+#if defined(DISPLAY_CYD) || defined(DISPLAY_RAK14014)
   const bool land = cydLandscape();
   const int16_t eff_etaY     = land ? LY_LAND_ETA_Y     : LY_ETA_Y;
   const int16_t eff_etaH     = land ? LY_LAND_ETA_H     : LY_ETA_H;
@@ -843,7 +831,7 @@ static void drawPrinting() {
 #endif
 
   // === CYD: clear unused zone on screen transitions ===
-#if defined(DISPLAY_CYD)
+#if defined(DISPLAY_CYD) || defined(DISPLAY_RAK14014)
   if (forceRedraw) {
     int16_t scrW = (int16_t)tft.width();
     int16_t scrH = (int16_t)tft.height();
@@ -986,7 +974,7 @@ static void drawPrinting() {
     }
 
   // === AMS zone (CYD: portrait + landscape) ===
-#if defined(DISPLAY_CYD)
+#if defined(DISPLAY_CYD) || defined(DISPLAY_RAK14014)
   if (s.ams.present && s.ams.unitCount > 0) {
     drawAmsZone(s, forceRedraw);
   }
@@ -1037,9 +1025,9 @@ static void drawPrinting() {
                      etaTm.tm_mon + 1, etaTm.tm_mday, etaH, etaTm.tm_min, ampm);
         } else {
           if (netSettings.use24h)
-            snprintf(etaBuf, sizeof(etaBuf), "ETA: %02d:%02d", etaH, etaTm.tm_min);
+            snprintf(etaBuf, sizeof(etaBuf), "ETA: %02d:%02d -> %d m", etaH, etaTm.tm_min, s.remainingMinutes);
           else
-            snprintf(etaBuf, sizeof(etaBuf), "ETA: %d:%02d %s", etaH, etaTm.tm_min, ampm);
+            snprintf(etaBuf, sizeof(etaBuf), "ETA: %d:%02d %s -> %d m", etaH, etaTm.tm_min, ampm, s.remainingMinutes);
         }
         tft.setTextFont(4);
         tft.setTextColor(CLR_GREEN, CLR_BG);
@@ -1107,8 +1095,8 @@ static void drawPrinting() {
       if (t.present) {
         tft.drawCircle(10, eff_botCY, 5, CLR_TEXT_DARK);
         tft.fillCircle(10, eff_botCY, 4, t.colorRgb565);
-        tft.setTextDatum(ML_DATUM);
-        tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
+    tft.setTextDatum(ML_DATUM);
+    tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
         tft.drawString(t.type, 19, eff_botCY);
       } else {
         drawWifiSignalIndicator(s, eff_botCY);
@@ -1134,10 +1122,10 @@ static void drawPrinting() {
       tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
       tft.drawString(wBuf, SCREEN_W / 2 - 2, eff_botCY);
     } else {
-      tft.setTextDatum(MC_DATUM);
-      tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
-      char layerBuf[20];
-      snprintf(layerBuf, sizeof(layerBuf), "L%d/%d", s.layerNum, s.totalLayers);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
+    char layerBuf[20];
+    snprintf(layerBuf, sizeof(layerBuf), "L%d/%d", s.layerNum, s.totalLayers);
       tft.drawString(layerBuf, SCREEN_W / 2, eff_botCY);
     }
 
@@ -1150,8 +1138,8 @@ static void drawPrinting() {
       drawIcon16(tft, SCREEN_W - 18, eff_botCY - 8,
                  s.doorOpen ? icon_unlock : icon_lock, clr);
     } else {
-      tft.setTextDatum(MR_DATUM);
-      tft.setTextColor(speedLevelColor(s.speedLevel), CLR_BG);
+    tft.setTextDatum(MR_DATUM);
+    tft.setTextColor(speedLevelColor(s.speedLevel), CLR_BG);
       tft.drawString(speedLevelName(s.speedLevel), SCREEN_W - 4, eff_botCY);
     }
   }
@@ -1168,7 +1156,7 @@ static void drawFinished() {
   static float prevFinKwh = -2.0f;
 
   // Effective screen dimensions — finished uses full screen (no AMS sidebar)
-#if defined(DISPLAY_CYD)
+#if defined(DISPLAY_CYD) || defined(DISPLAY_RAK14014)
   const bool land = cydLandscape();
   const int16_t scrW = (int16_t)tft.width();
   const int16_t eff_finBotY  = land ? LY_LAND_FIN_BOT_Y  : LY_FIN_BOT_Y;
@@ -1296,13 +1284,13 @@ static void drawFinished() {
     tft.fillRect(0, eff_finBotY, scrW, eff_finBotH, CLR_BG);
     tft.setTextFont(1);
     if (waitingForDoor) {
-      tft.setTextDatum(MC_DATUM);
+    tft.setTextDatum(MC_DATUM);
       tft.setTextColor(CLR_ORANGE, CLR_BG);
       tft.drawString("Open door to dismiss", cx, eff_finWifiY);
     } else {
       drawIcon16(tft, 4, eff_finWifiY - 8, icon_wifi, CLR_TEXT_DIM);
       tft.setTextDatum(ML_DATUM);
-      tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
+    tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
       char wifiBuf[12];
       snprintf(wifiBuf, sizeof(wifiBuf), "%ddBm", s.wifiSignal);
       tft.drawString(wifiBuf, 22, eff_finWifiY);
