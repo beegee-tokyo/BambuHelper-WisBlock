@@ -6,7 +6,6 @@ codex/
 *.o
 *.obj
 *.elf
-*.bin
 firmware/
 *.map
 tools/pushall_dump.json
