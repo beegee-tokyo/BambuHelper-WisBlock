@@ -1182,7 +1182,19 @@ static void drawPrinting() {
           case GAUGE_CHAMBER_TEMP:needDraw = animating || s.chamberTemp != prevState.chamberTemp; break;
           case GAUGE_HEATBREAK:   needDraw = animating || s.heatbreakFanPct != prevState.heatbreakFanPct; break;
           case GAUGE_CLOCK:       needDraw = true; break;  // text cache handles actual redraw
-          default: break;
+          case GAUGE_LAYER:       needDraw = s.layerNum != prevState.layerNum || s.totalLayers != prevState.totalLayers; break;
+          default:
+            // AMS humidity / temperature gauges — index derived from enum value
+            if (gt >= GAUGE_AMS_HUM_1 && gt <= GAUGE_AMS_HUM_4) {
+              uint8_t ui = gt - GAUGE_AMS_HUM_1;
+              const AmsUnit &cu = s.ams.units[ui], &pu = prevState.ams.units[ui];
+              needDraw = cu.humidityRaw != pu.humidityRaw || cu.humidity != pu.humidity || cu.present != pu.present;
+            } else if (gt >= GAUGE_AMS_TEMP_1 && gt <= GAUGE_AMS_TEMP_4) {
+              uint8_t ui = gt - GAUGE_AMS_TEMP_1;
+              const AmsUnit &cu = s.ams.units[ui], &pu = prevState.ams.units[ui];
+              needDraw = cu.temp != pu.temp || cu.present != pu.present;
+            }
+            break;
         }
       }
       if (!needDraw) continue;
@@ -1228,10 +1240,28 @@ static void drawPrinting() {
         case GAUGE_CLOCK:
           drawClockWidget(tft, cx, cy, gR, gT, fr);
           break;
+        case GAUGE_LAYER:
+          drawLayerGauge(tft, cx, cy, gR, gT, s.layerNum, s.totalLayers, fr);
+          break;
         case GAUGE_EMPTY:
-        default:
           if (fr) tft.fillCircle(cx, cy, gR + 2, dispSettings.bgColor);
           break;
+        default: {
+          // AMS humidity / temperature gauges — index derived from enum value
+          static const char* amsLabel[AMS_MAX_UNITS] = { "AMS 1", "AMS 2", "AMS 3", "AMS 4" };
+          if (gt >= GAUGE_AMS_HUM_1 && gt <= GAUGE_AMS_HUM_4) {
+            uint8_t ui = gt - GAUGE_AMS_HUM_1;
+            const AmsUnit& u = s.ams.units[ui];
+            drawHumidityGauge(tft, cx, cy, gR, u.humidityRaw, u.humidity, u.present, amsLabel[ui], fr);
+          } else if (gt >= GAUGE_AMS_TEMP_1 && gt <= GAUGE_AMS_TEMP_4) {
+            uint8_t ui = gt - GAUGE_AMS_TEMP_1;
+            const AmsUnit& u = s.ams.units[ui];
+            drawTempGauge(tft, cx, cy, gR, u.present ? u.temp : 0, 0, 60.0f,
+                          dispSettings.chamberTemp.arc, amsLabel[ui], nullptr, fr, &dispSettings.chamberTemp);
+          } else {
+            if (fr) tft.fillCircle(cx, cy, gR + 2, dispSettings.bgColor);
+          }
+        } break;
       }
     }
   }

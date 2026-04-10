@@ -771,7 +771,10 @@ function toggleSection(id){
 var gaugeTypes=[
   '-- Empty --','Progress','Nozzle Temp','Bed Temp',
   'Part Fan','Aux Fan','Chamber Fan','Chamber Temp',
-  'Heatbreak Fan','Clock'
+  'Heatbreak Fan','Clock',
+  'AMS 1 Humidity','AMS 2 Humidity','AMS 3 Humidity','AMS 4 Humidity',
+  'Layer Progress',
+  'AMS 1 Temp','AMS 2 Temp','AMS 3 Temp','AMS 4 Temp'
 ];
 (function(){
   var sels=document.querySelectorAll('.gauge-slot-sel');
