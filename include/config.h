@@ -96,7 +96,7 @@
 // =============================================================================
 //  Physical button
 // =============================================================================
-#ifdef DISPLAY_CYD
+#ifdef DISPLAY_240x320
 #define BUTTON_DEFAULT_PIN    0       // CYD: GPIO4 is RGB LED, not usable
 #else
 #define BUTTON_DEFAULT_PIN    4       // default GPIO for physical button

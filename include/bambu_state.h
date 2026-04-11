@@ -18,6 +18,7 @@ struct AmsTray {
   bool     present;        // tray physically present
   uint16_t colorRgb565;    // pre-converted for TFT
   char     type[16];       // "PLA Matte" etc.
+  int8_t   remain;         // 0-100%, -1 = unknown/third-party
 };
 
 struct AmsUnit {
@@ -28,6 +29,7 @@ struct AmsUnit {
   float    temp;                  // current temperature inside AMS
   uint16_t dryRemainMin;          // minutes remaining, 0 = not drying
   uint16_t dryTotalMin;           // captured at drying start (for progress calc)
+  uint8_t  trayCount;             // actual trays parsed (4 for AMS2, 1 for AMS HT)
 };
 
 struct AmsState {

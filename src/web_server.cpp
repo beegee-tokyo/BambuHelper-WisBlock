@@ -1480,7 +1480,7 @@ static bool resolvePlaceholder(const char* name, String& out) {
   if (strcmp(name, "SLBL") == 0)   { out = dispSettings.smallLabels ? "checked" : ""; return true; }
   if (strcmp(name, "SHTIRE") == 0) { out = dispSettings.showTimeRemaining ? "checked" : ""; return true; }
   if (strcmp(name, "INVCOL_ROW") == 0) {
-#if defined(DISPLAY_CYD)
+#if defined(DISPLAY_240x320)
     out = "<div class=\"check-row\">"
       "<input type=\"checkbox\" id=\"invcol\" value=\"1\" ";
     out += dispSettings.invertColors ? "checked" : "";

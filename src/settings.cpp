@@ -325,7 +325,7 @@ void loadSettings() {
   rotState.lastRotateMs = 0;
 
   // Button settings
-#ifdef DISPLAY_CYD
+#ifdef DISPLAY_240x320
   buttonType = (ButtonType)prefs.getUChar("btn_type", BTN_TOUCHSCREEN);
 #else
   buttonType = (ButtonType)prefs.getUChar("btn_type", BTN_DISABLED);
