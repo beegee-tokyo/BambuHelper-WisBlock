@@ -13,8 +13,8 @@
 static unsigned long splashEnd = 0;
 static unsigned long finishScreenStart = 0;
 static bool finishActive = false;          // guards finishScreenStart against millis() wrap
-static unsigned long idleClockStart = 0;  // when all printers became idle
-static bool idleClockActive = false;      // guards idleClockStart against millis() wrap
+static unsigned long idleClockStart = 0;   // when all printers became idle
+static bool idleClockActive = false;       // guards idleClockStart against millis() wrap
 static unsigned long connectingScreenStart = 0;  // for stuck-state timeout
 static char prevGcodeState[MAX_ACTIVE_PRINTERS][16] = {{0}};
 
@@ -27,11 +27,276 @@ static bool anyPrinterPrinting() {
   return false;
 }
 
+static bool anyPrinterDrying() {
+  for (uint8_t i = 0; i < MAX_ACTIVE_PRINTERS; i++) {
+    if (isPrinterConfigured(i) && printers[i].state.ams.anyDrying) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool isSleepStickyScreen(ScreenState state) {
+  return state == SCREEN_CLOCK || state == SCREEN_OFF;
+}
+
+static bool isDisplayedPrinterAssignedToTasmota() {
+  return tasmotaSettings.assignedSlot == 255 ||
+         tasmotaSettings.assignedSlot == rotState.displayIndex;
+}
+
 static void transitionToClockOrOff() {
   if (dpSettings.showClockAfterFinish || buttonType == BTN_DISABLED) {
     setScreenState(SCREEN_CLOCK);
   } else {
     setScreenState(SCREEN_OFF);
+  }
+}
+
+static bool handleSplashPhase() {
+  // Hold splash for 2s
+  if (splashEnd > 0 && millis() > splashEnd) {
+    splashEnd = 0;
+    initWiFi();
+    initWebServer();
+    initBambuMqtt();
+    initButton();
+    initBuzzer();
+    tasmotaInit();
+  }
+
+  if (splashEnd > 0) {
+    delay(10);
+    return true;
+  }
+
+  return false;
+}
+
+static void cycleDisplayedPrinterFromButton() {
+  uint8_t idx = rotState.displayIndex;
+  for (uint8_t a = 1; a <= MAX_ACTIVE_PRINTERS; a++) {
+    uint8_t next = (idx + a) % MAX_ACTIVE_PRINTERS;
+    if (isPrinterConfigured(next) && next != idx) {
+      rotState.displayIndex = next;
+      triggerDisplayTransition();
+      rotState.lastRotateMs = millis();  // reset auto-rotate timer
+      finishActive = false;
+      // If switching to a cloud printer in UNKNOWN state, try a refresh
+      requestCloudRefresh(next);
+      break;
+    }
+  }
+}
+
+static void handleWakeButton() {
+  if (!wasButtonPressed()) return;
+
+  // Handle physical button press before MQTT so screen wakes instantly
+  // without waiting for a potentially blocking TLS reconnect.
+  buzzerPlayClick();
+  ScreenState cur = getScreenState();
+
+  if (isSleepStickyScreen(cur)) {
+    // Wake from sleep + reset backoff for immediate reconnect
+    setBacklight(getEffectiveBrightness());
+    finishActive = false;
+    idleClockActive = false;
+    resetMqttBackoff();
+    deferMqttReconnect();  // skip blocking reconnect this iteration so screen wakes instantly
+    setScreenState(SCREEN_IDLE);  // state machine will correct on next loop
+    return;
+  }
+
+  if (getActiveConnCount() >= 2) {
+    cycleDisplayedPrinterFromButton();
+    return;
+  }
+
+  if (cur == SCREEN_IDLE &&
+      isCloudMode(displayedPrinter().config.mode) &&
+      strcmp(displayedPrinter().state.gcodeState, "UNKNOWN") == 0) {
+    // Single printer, cloud, UNKNOWN - manual refresh
+    requestCloudRefresh(rotState.displayIndex);
+  }
+}
+
+static void handleDisplayedPrinterFinishState(ScreenState current, BambuState& s) {
+  if (current != SCREEN_FINISHED && !isSleepStickyScreen(current) &&
+      !(current == SCREEN_IDLE && s.ams.anyDrying) &&
+      !(current == SCREEN_PRINTING && finishActive)) {
+    if (tasmotaSettings.enabled && isDisplayedPrinterAssignedToTasmota()) {
+      tasmotaMarkPrintEnd();
+    }
+    setScreenState(dpSettings.keepPrintScreen ? SCREEN_PRINTING : SCREEN_FINISHED);
+    finishScreenStart = millis();
+    finishActive = true;
+    if (!s.finishBuzzerPlayed) {
+      buzzerPlay(BUZZ_PRINT_FINISHED);
+      s.finishBuzzerPlayed = true;
+    }
+  }
+
+  // Door acknowledge: wait for door open before starting timeout
+  bool waitingForDoor = dpSettings.doorAckEnabled && s.doorSensorPresent &&
+                        !s.doorAcknowledged;
+  if (waitingForDoor && s.doorOpen) {
+    s.doorAcknowledged = true;
+    finishScreenStart = millis();  // restart timeout from door open moment
+    finishActive = true;
+    Serial.println("Door opened - print removal acknowledged, starting timeout");
+  }
+
+  // AMS drying started while on finish/kept-print screen - switch to idle so
+  // drawIdleDrying() can take over.
+  if ((current == SCREEN_FINISHED ||
+       (current == SCREEN_PRINTING && dpSettings.keepPrintScreen && finishActive)) &&
+      s.ams.anyDrying) {
+    setScreenState(SCREEN_IDLE);
+    finishActive = false;
+    idleClockActive = false;
+  }
+}
+
+static void handleDisplayedPrinterIdleState(ScreenState current, const BambuState& s) {
+  // SCREEN_CLOCK and SCREEN_OFF are sticky - only button press or
+  // new print (s.printing -> SCREEN_PRINTING) exits them.
+  if (isSleepStickyScreen(current)) return;
+
+  ScreenState target = (dpSettings.keepPrintScreen && !s.ams.anyDrying)
+                       ? SCREEN_PRINTING : SCREEN_IDLE;
+  if (current != target) {
+    if (current == SCREEN_CONNECTING_MQTT) buzzerPlay(BUZZ_CONNECTED);
+    setScreenState(target);
+    finishActive = false;
+    idleClockActive = false;
+  }
+}
+
+static void handleDisplayedPrinterConnectedState(ScreenState current, BambuState& s) {
+  if (s.printing) {
+    if (current != SCREEN_PRINTING) {
+      setScreenState(SCREEN_PRINTING);
+      finishActive = false;
+      if (isDisplayedPrinterAssignedToTasmota()) {
+        tasmotaMarkPrintStart();
+      }
+    }
+    s.finishBuzzerPlayed = false;  // reset for next finish event
+    s.doorAcknowledged = false;    // reset door ack for next finish
+    return;
+  }
+
+  if (strcmp(s.gcodeState, "FINISH") == 0) {
+    handleDisplayedPrinterFinishState(current, s);
+    return;
+  }
+
+  handleDisplayedPrinterIdleState(current, s);
+}
+
+static void updateDisplayedPrinterScreenState() {
+  ScreenState current = getScreenState();
+
+  if (!isAnyPrinterConfigured()) {
+    if (current != SCREEN_IDLE && current != SCREEN_OFF) {
+      setScreenState(SCREEN_IDLE);
+      finishActive = false;
+    }
+    return;
+  }
+
+  if (isOtaAutoInProgress()) {
+    if (current != SCREEN_OTA_UPDATE) setScreenState(SCREEN_OTA_UPDATE);
+    return;
+  }
+
+  BambuState& s = displayedPrinter().state;
+  if (!s.connected) {
+    if (current != SCREEN_CONNECTING_MQTT && !isSleepStickyScreen(current)) {
+      setScreenState(SCREEN_CONNECTING_MQTT);
+      finishActive = false;
+      connectingScreenStart = millis();
+    }
+    return;
+  }
+
+  handleDisplayedPrinterConnectedState(current, s);
+}
+
+static void handleDisplaySleepTimeouts() {
+  // Idle/Connecting -> Clock/Off: if all printers are idle or disconnected,
+  // transition to clock or off after finishDisplayMins timeout.
+  // Covers both SCREEN_IDLE (printer connected but not printing) and
+  // SCREEN_CONNECTING_MQTT (printer offline/unreachable at startup).
+  ScreenState cur = getScreenState();
+  if ((cur == SCREEN_FINISHED || (cur == SCREEN_PRINTING && dpSettings.keepPrintScreen)) &&
+      !dpSettings.keepDisplayOn && finishActive) {
+    BambuState& fs = displayedPrinter().state;
+    bool waitingForDoor = dpSettings.doorAckEnabled && fs.doorSensorPresent &&
+                          !fs.doorAcknowledged;
+    if (!waitingForDoor) {
+      bool timeoutReached = (dpSettings.finishDisplayMins > 0) &&
+          (millis() - finishScreenStart > (unsigned long)dpSettings.finishDisplayMins * 60000UL);
+      bool immediateClockTransition = (dpSettings.finishDisplayMins == 0) &&
+          (dpSettings.showClockAfterFinish || buttonType == BTN_DISABLED);
+      if ((timeoutReached || immediateClockTransition) && !anyPrinterPrinting()) {
+        transitionToClockOrOff();
+        finishActive = false;
+      }
+    }
+  }
+
+  if ((cur == SCREEN_IDLE || cur == SCREEN_CONNECTING_MQTT ||
+       (cur == SCREEN_PRINTING && dpSettings.keepPrintScreen)) &&
+      !dpSettings.keepDisplayOn && dpSettings.finishDisplayMins > 0) {
+    // Don't sleep while AMS is drying - the drying screen is useful
+    if (!anyPrinterPrinting() && !anyPrinterDrying()) {
+      if (!idleClockActive) {
+        idleClockStart = millis();
+        idleClockActive = true;
+      }
+      if (millis() - idleClockStart > (unsigned long)dpSettings.finishDisplayMins * 60000UL) {
+        transitionToClockOrOff();
+      }
+    } else {
+      idleClockActive = false;
+    }
+  } else if (cur != SCREEN_IDLE && cur != SCREEN_CONNECTING_MQTT) {
+    idleClockActive = false;
+  }
+}
+
+static void handleConnectingScreenRecovery() {
+  // Stuck-state timeout: recover if stuck in a connecting screen too long
+  ScreenState curConn = getScreenState();
+  if (curConn == SCREEN_CONNECTING_WIFI || curConn == SCREEN_CONNECTING_MQTT) {
+    if (connectingScreenStart == 0) connectingScreenStart = millis();
+    if (millis() - connectingScreenStart > DISPLAY_STATE_TIMEOUT_MS) {
+      Serial.println("[MAIN] State timeout, recovering from connecting screen");
+      connectingScreenStart = 0;
+      if (dpSettings.showClockAfterFinish) {
+        setScreenState(SCREEN_CLOCK);
+      } else {
+        setScreenState(SCREEN_IDLE);
+      }
+    }
+  } else {
+    connectingScreenStart = 0;
+  }
+}
+
+static void handleErrorBuzzers() {
+  // Check for error state transition on any printer
+  for (uint8_t i = 0; i < MAX_ACTIVE_PRINTERS; i++) {
+    if (!isPrinterConfigured(i)) continue;
+    BambuState& ps = printers[i].state;
+    if (strcmp(ps.gcodeState, "FAILED") == 0 &&
+        strcmp(prevGcodeState[i], "FAILED") != 0 &&
+        prevGcodeState[i][0] != '\0') {
+      buzzerPlay(BUZZ_ERROR);
+    }
+    strlcpy(prevGcodeState[i], ps.gcodeState, sizeof(prevGcodeState[i]));
   }
 }
 
@@ -47,7 +312,7 @@ static void handleRotation() {
   ScreenState scr = getScreenState();
   if (scr == SCREEN_CLOCK || scr == SCREEN_OFF || scr == SCREEN_FINISHED) {
     if (!anyPrinterPrinting()) return;
-    // A printer started printing — wake display and let rotation proceed
+    // A printer started printing - wake display and let rotation proceed
     setBacklight(getEffectiveBrightness());
   }
 
@@ -74,7 +339,7 @@ static void handleRotation() {
 
   if (rotState.mode == ROTATE_SMART) {
     if (printingCount == 1) {
-      // Only one printing — show it, no cycling
+      // Only one printing - show it, no cycling
       if (rotState.displayIndex != printingSlot) {
         rotState.displayIndex = printingSlot;
         triggerDisplayTransition();
@@ -114,218 +379,19 @@ void setup() {
 }
 
 void loop() {
-  // Hold splash for 2s
-  if (splashEnd > 0 && millis() > splashEnd) {
-    splashEnd = 0;
-    initWiFi();
-    initWebServer();
-    initBambuMqtt();
-    initButton();
-    initBuzzer();
-    tasmotaInit();
-  }
-
-  if (splashEnd > 0) {
-    delay(10);
-    return;
-  }
+  if (handleSplashPhase()) return;
 
   handleWiFi();
   handleWebServer();
 
   if (isWiFiConnected() && !isAPMode()) {
-    // Handle physical button press (before MQTT so screen wakes instantly
-    // without waiting for a potentially blocking TLS reconnect)
-    if (wasButtonPressed()) {
-      buzzerPlayClick();
-      ScreenState cur = getScreenState();
-      if (cur == SCREEN_OFF || cur == SCREEN_CLOCK) {
-        // Wake from sleep + reset backoff for immediate reconnect
-        setBacklight(getEffectiveBrightness());
-        finishActive = false;
-        idleClockActive = false;
-        resetMqttBackoff();
-        deferMqttReconnect();  // skip blocking reconnect this iteration so screen wakes instantly
-        setScreenState(SCREEN_IDLE);  // state machine will correct on next loop
-      } else if (getActiveConnCount() >= 2) {
-        // Cycle to next configured printer
-        uint8_t idx = rotState.displayIndex;
-        for (uint8_t a = 1; a <= MAX_ACTIVE_PRINTERS; a++) {
-          uint8_t next = (idx + a) % MAX_ACTIVE_PRINTERS;
-          if (isPrinterConfigured(next) && next != idx) {
-            rotState.displayIndex = next;
-            triggerDisplayTransition();
-            rotState.lastRotateMs = millis();  // reset auto-rotate timer
-            finishActive = false;
-            // If switching to a cloud printer in UNKNOWN state, try a refresh
-            requestCloudRefresh(next);
-            break;
-          }
-        }
-      } else if (cur == SCREEN_IDLE &&
-                 isCloudMode(displayedPrinter().config.mode) &&
-                 strcmp(displayedPrinter().state.gcodeState, "UNKNOWN") == 0) {
-        // Single printer, cloud, UNKNOWN - manual refresh
-        requestCloudRefresh(rotState.displayIndex);
-      }
-    }
-
-    // Auto-select screen based on displayed printer state
-    BambuState& s = displayedPrinter().state;
-    ScreenState current = getScreenState();
-
-    if (!isAnyPrinterConfigured()) {
-      if (current != SCREEN_IDLE && current != SCREEN_OFF) {
-        setScreenState(SCREEN_IDLE);
-        finishActive = false;
-      }
-    } else if (isOtaAutoInProgress()) {
-      if (current != SCREEN_OTA_UPDATE) setScreenState(SCREEN_OTA_UPDATE);
-    } else if (!s.connected && current != SCREEN_CONNECTING_MQTT &&
-               current != SCREEN_OFF && current != SCREEN_CLOCK) {
-      setScreenState(SCREEN_CONNECTING_MQTT);
-      finishActive = false;
-      connectingScreenStart = millis();
-    } else if (!s.connected && (current == SCREEN_OFF || current == SCREEN_CLOCK)) {
-      // Stay off/clock when printer is disconnected/off
-    } else if (s.connected && s.printing) {
-      if (current != SCREEN_PRINTING) {
-        setScreenState(SCREEN_PRINTING);
-        finishActive = false;
-        if (tasmotaSettings.assignedSlot == 255 ||
-            tasmotaSettings.assignedSlot == rotState.displayIndex)
-          tasmotaMarkPrintStart();
-      }
-      s.finishBuzzerPlayed = false;  // reset for next finish event
-      s.doorAcknowledged = false;    // reset door ack for next finish
-    } else if (s.connected && !s.printing &&
-               strcmp(s.gcodeState, "FINISH") == 0) {
-      if (current != SCREEN_FINISHED && current != SCREEN_OFF && current != SCREEN_CLOCK
-          && !(current == SCREEN_IDLE && s.ams.anyDrying)
-          && !(current == SCREEN_PRINTING && finishActive)) {
-        if (tasmotaSettings.enabled &&
-            (tasmotaSettings.assignedSlot == 255 ||
-             tasmotaSettings.assignedSlot == rotState.displayIndex))
-          tasmotaMarkPrintEnd();
-        setScreenState(dpSettings.keepPrintScreen ? SCREEN_PRINTING : SCREEN_FINISHED);
-        finishScreenStart = millis();
-        finishActive = true;
-        if (!s.finishBuzzerPlayed) {
-          buzzerPlay(BUZZ_PRINT_FINISHED);
-          s.finishBuzzerPlayed = true;
-        }
-      }
-
-      // Door acknowledge: wait for door open before starting timeout
-      bool waitingForDoor = dpSettings.doorAckEnabled && s.doorSensorPresent
-                            && !s.doorAcknowledged;
-      if (waitingForDoor && s.doorOpen) {
-        s.doorAcknowledged = true;
-        finishScreenStart = millis();  // restart timeout from door open moment
-        finishActive = true;
-        Serial.println("Door opened - print removal acknowledged, starting timeout");
-      }
-
-      // AMS drying started while on finish/kept-print screen — switch to idle so
-      // drawIdleDrying() can take over
-      if ((current == SCREEN_FINISHED ||
-           (current == SCREEN_PRINTING && dpSettings.keepPrintScreen && finishActive))
-          && s.ams.anyDrying) {
-        setScreenState(SCREEN_IDLE);
-        finishActive = false;
-        idleClockActive = false;
-      }
-    } else if (s.connected && !s.printing &&
-               strcmp(s.gcodeState, "FINISH") != 0) {
-      // SCREEN_CLOCK and SCREEN_OFF are sticky — only button press or
-      // new print (s.printing → SCREEN_PRINTING) exits them
-      if (current == SCREEN_CLOCK || current == SCREEN_OFF) {
-        // nothing — stay asleep while printer is idle
-      } else {
-        ScreenState target = (dpSettings.keepPrintScreen && !s.ams.anyDrying)
-                             ? SCREEN_PRINTING : SCREEN_IDLE;
-        if (current != target) {
-          if (current == SCREEN_CONNECTING_MQTT) buzzerPlay(BUZZ_CONNECTED);
-          setScreenState(target);
-          finishActive = false;
-          idleClockActive = false;
-        }
-      }
-    }
+    handleWakeButton();
+    updateDisplayedPrinterScreenState();
   }
 
-  // Idle/Connecting → Clock/Off: if all printers are idle or disconnected,
-  // transition to clock or off after finishDisplayMins timeout.
-  // Covers both SCREEN_IDLE (printer connected but not printing) and
-  // SCREEN_CONNECTING_MQTT (printer offline/unreachable at startup).
-  ScreenState cur = getScreenState();
-  if ((cur == SCREEN_FINISHED || (cur == SCREEN_PRINTING && dpSettings.keepPrintScreen))
-      && !dpSettings.keepDisplayOn && finishActive) {
-    BambuState& fs = displayedPrinter().state;
-    bool waitingForDoor = dpSettings.doorAckEnabled && fs.doorSensorPresent &&
-                          !fs.doorAcknowledged;
-    if (!waitingForDoor) {
-      bool timeoutReached = (dpSettings.finishDisplayMins > 0) &&
-          (millis() - finishScreenStart > (unsigned long)dpSettings.finishDisplayMins * 60000UL);
-      bool immediateClockTransition = (dpSettings.finishDisplayMins == 0) &&
-          (dpSettings.showClockAfterFinish || buttonType == BTN_DISABLED);
-      if ((timeoutReached || immediateClockTransition) && !anyPrinterPrinting()) {
-        transitionToClockOrOff();
-        finishActive = false;
-      }
-    }
-  }
-
-  if ((cur == SCREEN_IDLE || cur == SCREEN_CONNECTING_MQTT ||
-       (cur == SCREEN_PRINTING && dpSettings.keepPrintScreen)) &&
-      !dpSettings.keepDisplayOn && dpSettings.finishDisplayMins > 0) {
-    // Don't sleep while AMS is drying — the drying screen is useful
-    bool anyDrying = false;
-    for (uint8_t i = 0; i < MAX_ACTIVE_PRINTERS; i++) {
-      if (isPrinterConfigured(i) && printers[i].state.ams.anyDrying) { anyDrying = true; break; }
-    }
-    if (!anyPrinterPrinting() && !anyDrying) {
-      if (!idleClockActive) { idleClockStart = millis(); idleClockActive = true; }
-      if (millis() - idleClockStart > (unsigned long)dpSettings.finishDisplayMins * 60000UL) {
-        transitionToClockOrOff();
-      }
-    } else {
-      idleClockActive = false;
-    }
-  } else if (cur != SCREEN_IDLE && cur != SCREEN_CONNECTING_MQTT) {
-    idleClockActive = false;
-  }
-
-  // Stuck-state timeout: recover if stuck in a connecting screen too long
-  {
-    ScreenState curConn = getScreenState();
-    if (curConn == SCREEN_CONNECTING_WIFI || curConn == SCREEN_CONNECTING_MQTT) {
-      if (connectingScreenStart == 0) connectingScreenStart = millis();
-      if (millis() - connectingScreenStart > DISPLAY_STATE_TIMEOUT_MS) {
-        Serial.println("[MAIN] State timeout, recovering from connecting screen");
-        connectingScreenStart = 0;
-        if (dpSettings.showClockAfterFinish) {
-          setScreenState(SCREEN_CLOCK);
-        } else {
-          setScreenState(SCREEN_IDLE);
-        }
-      }
-    } else {
-      connectingScreenStart = 0;
-    }
-  }
-
-  // Check for error state transition on any printer
-  for (uint8_t i = 0; i < MAX_ACTIVE_PRINTERS; i++) {
-    if (!isPrinterConfigured(i)) continue;
-    BambuState& ps = printers[i].state;
-    if (strcmp(ps.gcodeState, "FAILED") == 0 &&
-        strcmp(prevGcodeState[i], "FAILED") != 0 &&
-        prevGcodeState[i][0] != '\0') {
-      buzzerPlay(BUZZ_ERROR);
-    }
-    strlcpy(prevGcodeState[i], ps.gcodeState, sizeof(prevGcodeState[i]));
-  }
+  handleDisplaySleepTimeouts();
+  handleConnectingScreenRecovery();
+  handleErrorBuzzers();
 
   buzzerTick();
   checkNightMode();
