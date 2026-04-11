@@ -4,7 +4,7 @@ Dedicated Bambu Lab printer monitor built with ESP32-S3 Super Mini and a 1.54" 2
 
 Connects to your printer via MQTT over TLS and displays a real-time dashboard with arc gauges, animations, live stats, and optional buzzer notifications.
 
-Beta support for CYD 320x240 displays is also available.
+Additional supported boards include CYD 240x320, Waveshare 2" 240x320, and ESP32-C3 DIY builds using the same 240x240 display as the ESP32-S3 version.
 
 ### Supported Printers
 
@@ -33,11 +33,13 @@ When using Bambu Cloud, BambuHelper connects through Bambu Lab's cloud MQTT serv
 |---|---|---|
 | ![Dashboard](img/interface1.jpg) | ![Settings](img/screen1.png) | ![Gauge Colors](img/screen2.png) |
 
-## CYD Display Support (Beta)
+## Other Supported Boards
 
-| Preview | Notes |
-|---|---|
-| ![CYD display](img/CYD.png) | **CYD / ESP32-2432S028** support is available and currently **beta**. This is the larger `320x240` display version. Flashing is done the same way as the standard `240x240` build, but on [ESP Web Flasher](https://espressif.github.io/esptool-js/) you should set **Baudrate: 115200** before clicking **Connect**. This low baudrate note is for **CYD only**. The standard ESP32-S3 240x240 version does not require this change. Tested behavior so far: The first connection attempt may fail - click **Disconnect** in the web tool, then **Connect** again and it should work on the second try. **Do not physically unplug the USB cable between attempts** - just use the buttons in the web flasher. [Use this firmware](https://github.com/Keralots/BambuHelper/releases/download/v2.5/BambuHelper-cyd-v2.5-Full.bin) If the display colors appear reversed (white background instead of dark), go to the web interface under **Display** and enable **Invert display colors (fix white background)**. |
+| Preview | Board | Notes |
+|---|---|---|
+| ![CYD display](img/CYD.png) | **CYD / ESP32-2432S028** | `240x320` ILI9341 all-in-one board. Use the `cyd` firmware build. Due to RAM limits, this board supports **1 printer only**. When flashing from [ESP Web Flasher](https://espressif.github.io/esptool-js/), set **Baudrate: 115200** before clicking **Connect**. If the first attempt fails, click **Disconnect** and then **Connect** again without unplugging the USB cable. If colors look reversed (white background instead of dark), enable **Invert display colors (fix white background)** in the web UI under **Display**. |
+| ![Waveshare 2 inch](img/waveshare2inch.png) | **Waveshare ESP32-S3-Touch-LCD-2** | `240x320` ST7789 version with ESP32-S3, sold as a more plug-and-play option. Use the `ws_lcd_200` firmware build. Supports **up to 2 printers**, like the main ESP32-S3 DIY version. Product page: [waveshare.com/esp32-s3-touch-lcd-2.htm](https://www.waveshare.com/esp32-s3-touch-lcd-2.htm) |
+| ![ESP32-C3 board](img/ESP32c3Board.png) | **ESP32-C3 Super Mini** | DIY version, just like the main ESP32-S3 build, using the same `240x240` ST7789 display. Use the `esp32c3` firmware build. Due to RAM limits, this board supports **1 printer only**. |
 
 ## Features
 
@@ -57,7 +59,7 @@ When using Bambu Cloud, BambuHelper connects through Bambu Lab's cloud MQTT serv
 - **Physical button** - optional push button or TTP223 touch sensor to cycle printers and wake display
 - **Optional buzzer** - passive buzzer notifications for print finished, connected, and error events
 - **OTA updates** - firmware can be updated from the web interface
-- **CYD display support (beta)** - support for ESP32-2432S028 / 320x240 displays
+- **Additional board support** - CYD 240x320, Waveshare 2" 240x320, and ESP32-C3 240x240 builds are supported
 - **Exponential backoff** - reconnect attempts to offline printers gradually slow down to conserve resources
 
 ## Hardware
@@ -66,7 +68,7 @@ When using Bambu Cloud, BambuHelper connects through Bambu Lab's cloud MQTT serv
 |---|---|
 | MCU | ESP32-S3 Super Mini |
 | Display | 1.54" TFT SPI ST7789 (240x240) |
-| Optional display | CYD / ESP32-2432S028, 320x240 ILI9341 (beta) |
+| Other supported boards | CYD / ESP32-2432S028 (240x320 ILI9341), Waveshare ESP32-S3-Touch-LCD-2 (240x320 ST7789), ESP32-C3 Super Mini + 240x240 ST7789 |
 | Connection | SPI |
 
 Display: 1.54": https://a.aliexpress.com/_EG9y7wc
@@ -78,6 +80,8 @@ Optional: TTP223 touch button or standard push button for multi-printer switchin
 Optional: Passive buzzer for print finish and error notifications: https://aliexpress.com/item/1005008825917787.html
 
 Optional case seen on picture (for ST7789 (240x240) display): https://makerworld.com/en/models/2501721
+
+> **Note:** CYD and Waveshare 2" are all-in-one boards with the display already integrated. The wiring tables below mainly apply to the DIY ESP32-S3 and ESP32-C3 builds that use an external 240x240 ST7789 display.
 
 ### Default Wiring
 
@@ -122,7 +126,6 @@ Use a **passive buzzer** and connect it like this:
 | `-` / `GND` | `GND` | `GND` |
 
 > **Note:** The firmware default buzzer pin is `GPIO 5` on both ESP32-S3 and ESP32-C3. The table above shows the **recommended wiring**. If you wire an ESP32-C3 buzzer to `GPIO 3`, you must change the buzzer pin to `GPIO 3` in the web interface after the first boot.
-> **Note:** The firmware default buzzer pin is `GPIO 5` on both ESP32-S3 and ESP32-C3. The table above shows the **recommended wiring**. If you wire an ESP32-C3 buzzer to `GPIO 3`, you must change the buzzer pin to `GPIO 3` in the web interface after the first boot.
 You can change the buzzer GPIO later in the web interface under **Buzzer**. The buzzer can be used for print-finished, connected, and error notifications.
 
 ![wiring](img/wiring.png)
@@ -133,7 +136,7 @@ You can change the buzzer GPIO later in the web interface under **Buzzer**. The 
 
 ## Flashing
 
-1. Download the latest firmware from [Releases](../../releases). **If you are flashing a new device for the first time**, use the file ending with **-Full** (e.g. `BambuHelper-WebFlasher-v2.5-Full.bin`). The regular (non-Full) file is for OTA updates on devices that already have BambuHelper installed.
+1. Download the latest firmware from [Releases](../../releases). **If you are flashing a new device for the first time**, use the file ending with **-Full** (for example `BambuHelper-esp32s3-v2.7-Full.bin`). The regular `-ota.bin` file is for OTA updates on devices that already have BambuHelper installed.
 2. Open [ESP Web Flasher](https://espressif.github.io/esptool-js/) in Chrome or Edge
 3. If you are flashing a **CYD**, set **Baudrate** to **115200** before clicking **Connect**. Two or more attempts may be needed - the first one will fail. This applies to **CYD only**.
 4. Connect your ESP32 via USB
@@ -141,6 +144,15 @@ You can change the buzzer GPIO later in the web interface under **Buzzer**. The 
 6. Set flash address to **0x0**
 7. Select the downloaded `.bin` file
 8. Click **Program**
+
+### Build Files
+
+| Board | Use this `Full` file for first flash / recovery |
+|---|---|
+| ESP32-S3 Super Mini | `BambuHelper-esp32s3-v2.7-Full.bin` |
+| CYD / ESP32-2432S028 | `BambuHelper-cyd-v2.7-Full.bin` |
+| Waveshare ESP32-S3-Touch-LCD-2 | `BambuHelper-ws_lcd_200-v2.7-Full.bin` |
+| ESP32-C3 Super Mini | `BambuHelper-esp32c3-v2.7-Full.bin` |
 
 ## Setup
 
@@ -223,7 +235,7 @@ The built-in web interface (accessible at the device's IP address) provides the 
   - Gateway
   - Subnet Mask
   - DNS Server
-- **Show IP at startup** - display the assigned IP on screen for 3 seconds after WiFi connects (on by default)
+- **Show IP at startup** - display the assigned IP on screen for 1.5 seconds after WiFi connects (on by default)
 
 ### Printer Settings
 - **Connection Mode** - LAN Direct or Bambu Cloud (All printers)
@@ -269,7 +281,7 @@ The built-in web interface (accessible at the device's IP address) provides the 
 | Splash | Boot (2 seconds) |
 | AP Mode | First boot / no WiFi configured |
 | Connecting WiFi | Attempting WiFi connection |
-| WiFi Connected | Shows IP for 3 seconds (if enabled) |
+| WiFi Connected | Shows IP for 1.5 seconds (if enabled) |
 | Connecting Printer | WiFi connected, waiting for MQTT |
 | Idle | Connected, printer not printing |
 | Printing | Active print with full dashboard |
@@ -352,11 +364,11 @@ When a printer is physically powered off, BambuHelper uses exponential backoff t
 
 When the printer comes back online, the backoff resets to normal immediately.
 
-## Power Monitoring *(initial support, beta)*
+## Power Monitoring
 
 | | |
 |---|---|
-| ![Power Monitoring](img/PowerMonitoring.png) | BambuHelper can display live power consumption from a **[Tasmota](https://tasmota.github.io/docs/)-flashed smart plug** connected to your printer. Tasmota is open-source firmware for ESP-based smart plugs that exposes a local HTTP API and MQTT - no cloud required.<br><br>**What it shows:**<br>- Live wattage in the bottom status bar on the idle and printing screens<br>- Total kWh used during the print job, shown on the "Print Complete" screen<br><br>**Setup:** open the web interface, go to **Power Monitoring**, enter the plug's local IP address, set your preferred poll interval (10-30s), and choose whether to alternate the watts display with the layer counter or always show watts.<br><br>**Requirements:** any Tasmota-flashed smart plug with energy monitoring (e.g. Sonoff S31, BlitzWolf BW-SHP6, Nous A1). The plug must be on your local network and reachable from the ESP32. No Tasmota MQTT broker needed - BambuHelper polls the HTTP API directly.<br><br>*This is initial/beta support. Future plans include automatic printer power-off based on nozzle temperature and idle time.* |
+| ![Power Monitoring](img/PowerMonitoring.png) | BambuHelper can display live power consumption from a **[Tasmota](https://tasmota.github.io/docs/)-flashed smart plug** connected to your printer. Tasmota is open-source firmware for ESP-based smart plugs that exposes a local HTTP API and MQTT - no cloud required.<br><br>**What it shows:**<br>- Live wattage in the bottom status bar on the idle and printing screens<br>- Total kWh used during the print job, shown on the "Print Complete" screen<br><br>**Setup:** open the web interface, go to **Power Monitoring**, enter the plug's local IP address, set your preferred poll interval (10-30s), and choose whether to alternate the watts display with the layer counter or always show watts.<br><br>**Requirements:** any Tasmota-flashed smart plug with energy monitoring (e.g. Sonoff S31, BlitzWolf BW-SHP6, Nous A1). The plug must be on your local network and reachable from the ESP32. No Tasmota MQTT broker needed - BambuHelper polls the HTTP API directly.<br><br>Future plans include automatic printer power-off based on nozzle temperature and idle time. |
 
 ## Troubleshooting
 
@@ -390,7 +402,6 @@ Perform an antenna mod by soldering two individual goldpins to the antenna pads,
 ## Future Plans
 
 - Planned display support: Waveshare [ESP32-S3-LCD-1.54](https://www.waveshare.com/esp32-s3-lcd-1.54.htm) (240x240, ST7789)
-- Planned display support: Waveshare [ESP32-S3-Touch-LCD-2](https://www.waveshare.com/esp32-s3-touch-lcd-2.htm) (240x320, ST7789T3 / CST816D touch)
 - Automatic printer power-off via Tasmota after cooldown and idle timeout
 - Expanded AMS/filament visualization
 
