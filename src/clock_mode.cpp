@@ -29,6 +29,7 @@ void resetClock() {
 
 // X position for each of the 5 slots: d0 d1 : d3 d4
 static int clkDigitX(int i) {
+  // Center clock in landscape mode for rectangular displays, e.g. 320x240
   if ((dispSettings.rotation == 1 || dispSettings.rotation == 3)) {
     int clk_time_x_l = ((LY_H - CLK_TIME_W) / 2);
     if (i < 2) return clk_time_x_l + i * CLK_DIGIT_W;
@@ -53,17 +54,36 @@ void drawClock() {
   uint16_t timeClr = dispSettings.clockTimeColor;
   uint16_t dateClr = dispSettings.clockDateColor;
 
+  // Set center position for clock in landscape or portrait mode for rectangular displays, e.g. 320x240
+  int ly_w_clk;
+  int ly_clk_ampm_y;
+  int ly_clk_date_y;
+  int dy;
+  if ((dispSettings.rotation == 1 || dispSettings.rotation == 3))
+  {
+	  ly_w_clk = LY_H;
+	  dy = LY_CLK_TIME_Y_L - CLK_DIGIT_H / 2; // top-left Y (MC_DATUM centers at LY_CLK_TIME_Y_L if landscape)
+	  ly_clk_ampm_y = LY_CLK_AMPM_Y_L;
+	  ly_clk_date_y = LY_CLK_DATE_Y_L;
+  }
+  else
+  {
+	  ly_w_clk = LY_W;
+	  dy = LY_CLK_TIME_Y - CLK_DIGIT_H / 2; // top-left Y (MC_DATUM centers at LY_CLK_TIME_Y)
+	  ly_clk_ampm_y = LY_CLK_AMPM_Y;
+	  ly_clk_date_y = LY_CLK_DATE_Y;
+  }
+
   // --- Colon blink (every call, ~250ms) ---
   bool colonOn = (millis() % 1000) < 500;
   if (colonOn != prevColon) {
     int cx = clkDigitX(2);
-    int cy = LY_CLK_TIME_Y - CLK_DIGIT_H / 2;
-    tft.fillRect(cx, cy, CLK_COLON_W, CLK_DIGIT_H, bg);
-    if (colonOn) {
+	tft.fillRect(cx, dy, CLK_COLON_W, CLK_DIGIT_H, bg);
+	if (colonOn) {
       tft.setTextFont(7);
       tft.setTextSize(1);
       tft.setTextColor(timeClr, bg);
-      tft.drawChar(':', cx, cy, 7);
+      tft.drawChar(':', cx, dy, 7);
     }
     prevColon = colonOn;
   }
@@ -92,8 +112,6 @@ void drawClock() {
   tft.setTextSize(1);
   tft.setTextColor(timeClr, bg);
 
-  int dy = LY_CLK_TIME_Y - CLK_DIGIT_H / 2;  // top-left Y (MC_DATUM centers at LY_CLK_TIME_Y)
-
   for (int i = 0; i < 5; i++) {
     if (i == 2) continue;  // colon handled above
     if (digits[i] == prevDigits[i]) continue;
@@ -113,12 +131,6 @@ void drawClock() {
 
   
   // --- AM/PM (12h mode) / clear stale AM/PM when switching to 24h ---
-  int ly_w_clk;
-  if ((dispSettings.rotation == 1 || dispSettings.rotation == 3)) {
-	  ly_w_clk = LY_H;
-  } else {
-	  ly_w_clk = LY_W;
-  }
   if (!netSettings.use24h)
   {
 	  const char *ampm = now.tm_hour < 12 ? "AM" : "PM";
@@ -128,8 +140,8 @@ void drawClock() {
 		  tft.setTextFont(4);
 		  tft.setTextColor(dateClr, bg);
 		  int ampmW = tft.textWidth("PM");
-		  tft.fillRect(ly_w_clk / 2 - ampmW / 2 - 2, LY_CLK_AMPM_Y - 12, ampmW + 4, 24, bg);
-		  tft.drawString(ampm, ly_w_clk / 2, LY_CLK_AMPM_Y);
+		  tft.fillRect(ly_w_clk / 2 - ampmW / 2 - 2, ly_clk_ampm_y - 12, ampmW + 4, 24, bg);
+		  tft.drawString(ampm, ly_w_clk / 2, ly_clk_ampm_y);
 		  strlcpy(prevAmPm, ampm, sizeof(prevAmPm));
 	  }
   }
@@ -138,7 +150,7 @@ void drawClock() {
 	  tft.setTextDatum(MC_DATUM);
 	  tft.setTextFont(4);
 	  int ampmW = tft.textWidth("PM");
-	  tft.fillRect(ly_w_clk / 2 - ampmW / 2 - 2, LY_CLK_AMPM_Y - 12, ampmW + 4, 24, bg);
+	  tft.fillRect(ly_w_clk / 2 - ampmW / 2 - 2, ly_clk_ampm_y - 12, ampmW + 4, 24, bg);
 	  prevAmPm[0] = '\0';
   }
 
@@ -164,8 +176,8 @@ void drawClock() {
     int dateW = tft.textWidth(prevDateBuf[0] ? prevDateBuf : dateBuf);
     int newW = tft.textWidth(dateBuf);
     int clearW = (dateW > newW) ? dateW : newW;
-	tft.fillRect(ly_w_clk / 2 - clearW / 2 - 2, LY_CLK_DATE_Y - 12, clearW + 4, 24, bg);
-	tft.drawString(dateBuf, ly_w_clk / 2, LY_CLK_DATE_Y);
+	tft.fillRect(ly_w_clk / 2 - clearW / 2 - 2, ly_clk_date_y - 12, clearW + 4, 24, bg);
+	tft.drawString(dateBuf, ly_w_clk / 2, ly_clk_date_y);
 	strlcpy(prevDateBuf, dateBuf, sizeof(prevDateBuf));
   }
 }

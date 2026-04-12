@@ -1070,6 +1070,7 @@ static void drawAmsStrip(const AmsState& ams,
                      ams.trays[trayIdx], trayIdx == ams.activeTray);
     }
 
+    // Show AMS humidity after AMS label
     char label[11];
 	const AmsUnit &cu = ams.units[u];
 	snprintf(label, sizeof(label), "AMS %c %d%%", 'A' + u, cu.humidityRaw);
@@ -1164,6 +1165,7 @@ static void drawAmsZone(const BambuState& s, bool force) {
       }
 
       // AMS label below bars
+      // Show AMS humidity after AMS label
       char label[11];
 	  const AmsUnit &cu = s.ams.units[u];
 	  snprintf(label, sizeof(label), "AMS %c %d%%", 'A' + u, cu.humidityRaw);

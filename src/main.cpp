@@ -372,7 +372,7 @@ static void handleRotation() {
 // ---------------------------------------------------------------------------
 void setup() {
 #if defined (_VARIANT_RAK3112_)
-  // Power up the display
+  // Power up the display when WisBlock is used
   pinMode(WB_IO2, OUTPUT);
   digitalWrite(WB_IO2, HIGH);
 #endif

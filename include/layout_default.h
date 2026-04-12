@@ -87,6 +87,9 @@
 #define LY_CLK_TIME_Y    100
 #define LY_CLK_AMPM_Y    135
 #define LY_CLK_DATE_Y    155
+#define LY_CLK_TIME_Y_L LY_CLK_TIME_Y
+#define LY_CLK_AMPM_Y_L LY_CLK_AMPM_Y
+#define LY_CLK_DATE_Y_L LY_CLK_DATE_Y
 
 // --- Pong/Breakout clock ---
 #define LY_ARK_BRICK_ROWS   5

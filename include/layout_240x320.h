@@ -123,21 +123,16 @@
 #define LY_AP_OPEN_Y      185
 #define LY_AP_IP_Y        210
 
-// --- Simple clock (centered in 320px height) ---
-#ifndef _VARIANT_RAK3112_
+// --- Simple clock (centered in 320px height or 240px height) ---
 #define LY_CLK_CLEAR_Y   70
 #define LY_CLK_CLEAR_H   200
 #define LY_CLK_TIME_Y    140
 #define LY_CLK_AMPM_Y    175
 #define LY_CLK_DATE_Y    205
-#else // RAK3312 + RAK14014
-#define LY_CLK_CLEAR_Y   50
-#define LY_CLK_CLEAR_H   140
-#define LY_CLK_TIME_Y    100
-#define LY_CLK_AMPM_Y    135
-#define LY_CLK_DATE_Y    155
-#endif
-// --- Pong/Breakout clock ---
+#define LY_CLK_TIME_Y_L    100
+#define LY_CLK_AMPM_Y_L    135
+#define LY_CLK_DATE_Y_L    155
+//  --- Pong/Breakout clock ---
 #define LY_ARK_BRICK_ROWS   5
 #define LY_ARK_COLS          10
 #define LY_ARK_BRICK_W      22

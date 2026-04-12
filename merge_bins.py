@@ -7,7 +7,7 @@ Usage:
     python merge_bins.py --board cyd        # build CYD firmware
     python merge_bins.py --board esp32c3    # build ESP32-C3 firmware
     python merge_bins.py --board ws_lcd_200 # build Waveshare 2.0 firmware
-    python merge_bins.py --all              # build all 4 board variants
+    python merge_bins.py --all              # build all 5 board variants
     python merge_bins.py --board rak3312    # build RAK3312 firmware
     python merge_bins.py v2.5               # override version
     python merge_bins.py --ota              # OTA binary only
@@ -22,6 +22,9 @@ Output:
     firmware/v2.5/BambuHelper-ws_lcd_200-v2.5-ota.bin
     firmware/v2.5/BambuHelper-esp32c3-v2.5-Full.bin
     firmware/v2.5/BambuHelper-esp32c3-v2.5-ota.bin
+    firmware/v2.7/BambuHelper-rak3312-v2.7-Full.bin
+    firmware/v2.7/BambuHelper-rak3312-v2.7-ota.bin
+
 """
 
 import argparse

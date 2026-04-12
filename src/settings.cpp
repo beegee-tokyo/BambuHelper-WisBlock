@@ -14,8 +14,8 @@ DisplaySettings dispSettings;
 NetworkSettings netSettings;
 DisplayPowerSettings dpSettings;
 char cloudEmail[64] = {0};
-
 #if defined(_VARIANT_RAK3112_)
+// Enforce button type TOUCH
 ButtonType buttonType = BTN_TOUCHSCREEN;
 #else
 ButtonType buttonType = BTN_DISABLED;

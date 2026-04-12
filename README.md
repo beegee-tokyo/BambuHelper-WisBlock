@@ -1,18 +1,5 @@
 # BambuHelper
 
-Dedicated Bambu Lab printer monitor built with WisBlock [RAK3312](https://store.rakwireless.com/products/wisblock-core-module-rak3312-lora-wifi-ble) ESP32-S3, [RAK19007](https://store.rakwireless.com/products/rak19007-wisblock-base-board-2nd-gen) Base Board, [RAK14014](https://store.rakwireless.com/products/240x320-pixel-full-color-tft-display-with-touch-screen-rak14014) 320x240 2.4" TFT Touch Screen display and [RAK18001](https://store.rakwireless.com/products/wisblock-buzzer-module-rak18001) Buzzer.
-
-A matching enclosure for the WisBlock BambuHelper can be found on [MakerWorld](https://makerworld.com/en/models/2571194-wisblock-bambuhelper-landscape) and [Printables](https://www.printables.com/model/1649739-wisblock-bambuhelper-landscape).
-
-----
-_**This application is a branch of [Keralots BambuHelper](https://github.com/Keralots/BambuHelper) which supports other ESP32 boards, like the ESP32-S3 Super Mini and a 1.54" 240x240 color TFT display (ST7789).**_ 
-
-----   
-_**The code base is kept up to date with the origin code maintained by Keralots. Difference between the codes is limited to hardware specific changes.**_    
-
-----
-
-Original design:
 Dedicated Bambu Lab printer monitor built with ESP32-S3 Super Mini and a 1.54" 240x240 color TFT display (ST7789).
 
 Connects to your printer via MQTT over TLS and displays a real-time dashboard with arc gauges, animations, live stats, and optional buzzer notifications.
@@ -128,6 +115,8 @@ A button or touch sensor is optional. It cycles between printers and wakes the d
 
 **Standard push button:** connect one leg to `GPIO 4` and the other to `GND`. The internal pull-up is enabled automatically. Select **Push Button** in the web interface.
 
+> **Note:** For WisBlock RAK3312 with RAK14014 TFT display select **TouchScreen** in the web interface.
+
 ### Optional Buzzer Wiring
 
 The buzzer is completely optional. If you do not connect one, BambuHelper works normally.
@@ -144,7 +133,7 @@ You can change the buzzer GPIO later in the web interface under **Buzzer**. The 
 
 ![wiring](img/wiring.png)
 
-> **Note:** The RAK18001 buzzer pin is `GPIO 21`.
+> **Note:** For WisBlock RAK3312 with RAK14014 TFT display and the RAK18001 buzzer, the GPIO pin is `GPIO 21`.
 
 ### Assembly Video
 
@@ -161,7 +150,6 @@ You can change the buzzer GPIO later in the web interface under **Buzzer**. The 
 
 ## Flashing
 
-1. WisBlock RAK3312 Download the latest firmware from [firmware](./firmware). **If you are flashing a new device for the first time**, use the file ending with **-Full** (e.g. `BambuHelper-rak3312-V2.6-Full.bin`). The regular (non-Full) file is for OTA updates on devices that already have BambuHelper installed.
 1. Download the latest firmware from [Releases](../../releases). **If you are flashing a new device for the first time**, use the file ending with **-Full** (for example `BambuHelper-esp32s3-v2.7-Full.bin`). The regular `-ota.bin` file is for OTA updates on devices that already have BambuHelper installed.
 2. Open [ESP Web Flasher](https://espressif.github.io/esptool-js/) in Chrome or Edge
 3. If you are flashing a **CYD**, set **Baudrate** to **115200** before clicking **Connect**. Two or more attempts may be needed - the first one will fail. This applies to **CYD only**.
