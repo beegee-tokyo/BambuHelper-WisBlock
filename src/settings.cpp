@@ -15,7 +15,7 @@ NetworkSettings netSettings;
 DisplayPowerSettings dpSettings;
 char cloudEmail[64] = {0};
 
-#if defined (DISPLAY_RAK14014)
+#if defined(_VARIANT_RAK3112_)
 ButtonType buttonType = BTN_TOUCHSCREEN;
 #else
 ButtonType buttonType = BTN_DISABLED;
@@ -113,7 +113,6 @@ void defaultDisplaySettings(DisplaySettings& ds) {
   ds.smallLabels = false;
   ds.showTimeRemaining = false;
   ds.invertColors = false;
-  ds.cydExtraMode = 0;
   ds.clockTimeColor = CLR_TEXT;
   ds.clockDateColor = CLR_TEXT_DIM;
 
@@ -228,7 +227,7 @@ void loadSettings() {
 
     // Zero out state
     memset(&printers[i].state, 0, sizeof(BambuState));
-    strlcpy(printers[i].state.gcodeState, "UNKNOWN", sizeof(printers[i].state.gcodeState));
+    setPrinterGcodeStateCanonical(printers[i].state, GCODE_UNKNOWN);
   }
 
   // Display settings
@@ -243,7 +242,6 @@ void loadSettings() {
   dispSettings.smallLabels = prefs.getBool("dsp_slbl", def.smallLabels);
   dispSettings.showTimeRemaining = prefs.getBool("dsp_shtire", def.showTimeRemaining);
   dispSettings.invertColors = prefs.getBool("dsp_inv", def.invertColors);
-  dispSettings.cydExtraMode = 0;  // extra gauges removed - AMS only on CYD
   dispSettings.clockTimeColor = prefs.getUShort("dsp_clkt", CLR_TEXT);
   dispSettings.clockDateColor = prefs.getUShort("dsp_clkd", CLR_TEXT_DIM);
 
@@ -284,7 +282,7 @@ void loadSettings() {
     prefs.putBool("tz_migrated", true);
     Serial.printf("[SETTINGS] Migrated timezone: offset %d -> %s\n", oldOffset, tzStr.c_str());
   } else if (!tzStr.isEmpty() && !tzMigrated) {
-    // Recovery: net_tzstr already exists but flag is absent � this device ran
+    // Recovery: net_tzstr already exists but flag is absent — this device ran
     // the old migration code and lost power before it could be marked done.
     // Stamp the flag now so future boots skip migration entirely.
     prefs.putBool("tz_migrated", true);
@@ -329,7 +327,7 @@ void loadSettings() {
   rotState.lastRotateMs = 0;
 
   // Button settings
-#ifdef DISPLAY_CYD
+#ifdef DISPLAY_240x320
   buttonType = (ButtonType)prefs.getUChar("btn_type", BTN_TOUCHSCREEN);
 #else
   buttonType = (ButtonType)prefs.getUChar("btn_type", BTN_DISABLED);
@@ -380,7 +378,6 @@ void saveSettings() {
   prefs.putBool("dsp_slbl", dispSettings.smallLabels);
   prefs.putBool("dsp_shtire", dispSettings.showTimeRemaining);
   prefs.putBool("dsp_inv", dispSettings.invertColors);
-  prefs.putUChar("dsp_cydex", dispSettings.cydExtraMode);
   prefs.putUShort("dsp_clkt", dispSettings.clockTimeColor);
   prefs.putUShort("dsp_clkd", dispSettings.clockDateColor);
 

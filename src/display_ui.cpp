@@ -106,7 +106,7 @@ void initDisplay() {
   Serial.flush();
   tft.init();  // TFT_eSPI configures SPI from build flags
   Serial.println("Display: tft.init() done");
-#if defined(DISPLAY_CYD) || defined(DISPLAY_RAK14014)
+#if defined(DISPLAY_240x320)
   // Clear entire GRAM at rotation 0 first (guarantees all 240x320 pixels
   // are addressed). Without this, rotations 1/3 leave 80px of uninitialized
   // VRAM visible as garbage noise on the extra screen edge.
@@ -114,7 +114,7 @@ void initDisplay() {
   tft.fillScreen(TFT_BLACK);
 #endif
   tft.setRotation(dispSettings.rotation);
-#if defined(DISPLAY_CYD)
+#if defined(DISPLAY_240x320)
   if (dispSettings.invertColors) tft.invertDisplay(false);
 #endif
   Serial.println("Display: setRotation done");
@@ -147,13 +147,13 @@ void initDisplay() {
 }
 
 void applyDisplaySettings() {
-#if defined(DISPLAY_CYD) || defined(DISPLAY_RAK14014)
+#if defined(DISPLAY_240x320)
   // Pre-clear entire GRAM at rotation 0 to prevent garbage on edges
   tft.setRotation(0);
   tft.fillScreen(TFT_BLACK);
 #endif
   tft.setRotation(dispSettings.rotation);
-#if defined(DISPLAY_CYD)
+#if defined(DISPLAY_240x320)
   tft.invertDisplay(dispSettings.invertColors ? false : true);
 #endif
   tft.fillScreen(dispSettings.bgColor);
@@ -517,12 +517,11 @@ static void drawIdleDrying(PrinterSlot& p) {
   prevTemp = u.temp;
 
   // === Progress bar (top, y=0-5) ===
+  uint8_t dryProgress = 0;
+  if (u.dryTotalMin > 0 && u.dryRemainMin <= u.dryTotalMin)
+    dryProgress = 100 - (uint8_t)((uint32_t)u.dryRemainMin * 100 / u.dryTotalMin);
   if (dataChanged) {
-    uint8_t progress = 0;
-    if (u.dryTotalMin > 0 && u.dryRemainMin <= u.dryTotalMin)
-      progress = 100 - (uint8_t)((uint32_t)u.dryRemainMin * 100 / u.dryTotalMin);
-    drawLedProgressBar(tft, 0, progress);
-    tickProgressShimmer(tft, 0, progress, true);
+    drawLedProgressBar(tft, 0, dryProgress);
   }
 
   // === Header bar ===
@@ -571,11 +570,60 @@ static void drawIdleDrying(PrinterSlot& p) {
     tft.drawString(unitName, cx, 40);
   }
 
-  // === Large temperature display (center) ===
+#if defined(DISPLAY_240x320)
+  // === 240x320: Centered large temp + remaining + humidity ===
+  // Vertically centered between unit name (y~50) and ETA (y=260)
+  {
+    tft.fillRect(0, 55, SCREEN_W, 75, CLR_BG);
+
+    char tempBuf[14];
+    snprintf(tempBuf, sizeof(tempBuf), "%.1f", u.temp);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextFont(7);
+    tft.setTextColor(CLR_ORANGE, CLR_BG);
+    int16_t tempW = tft.textWidth(tempBuf);
+    tft.drawString(tempBuf, cx - 10, 100);
+
+    tft.setTextFont(4);
+    tft.setTextDatum(ML_DATUM);
+    tft.drawString("'C", cx - 10 + tempW / 2 + 2, 86);
+  }
+
+  // === Remaining time ===
+  {
+    const int16_t timeY = 160;
+    tft.fillRect(0, timeY - 14, SCREEN_W, 30, CLR_BG);
+    char timeBuf[20];
+    uint16_t h = u.dryRemainMin / 60;
+    uint16_t m = u.dryRemainMin % 60;
+    if (h > 0)
+      snprintf(timeBuf, sizeof(timeBuf), "%dh %02dm remaining", h, m);
+    else
+      snprintf(timeBuf, sizeof(timeBuf), "%dm remaining", m);
+
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextFont(4);
+    tft.setTextColor(CLR_YELLOW, CLR_BG);
+    tft.drawString(timeBuf, cx, timeY);
+  }
+
+  // === Humidity ===
+  {
+    const int16_t humY = 200;
+    tft.fillRect(0, humY - 14, SCREEN_W, 30, CLR_BG);
+    char humBuf[24];
+    snprintf(humBuf, sizeof(humBuf), "Humidity: %d%%", u.humidityRaw);
+
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextFont(4);
+    tft.setTextColor(humidityColor(u.humidity), CLR_BG);
+    tft.drawString(humBuf, cx, humY);
+  }
+#else
+  // === 240x240: Large temperature display (center) ===
   {
     tft.fillRect(0, 55, SCREEN_W, 65, CLR_BG);
 
-    // Big temperature number + degree C together
     char tempBuf[14];
     snprintf(tempBuf, sizeof(tempBuf), "%.1f", u.temp);
     tft.setTextDatum(MC_DATUM);
@@ -584,7 +632,6 @@ static void drawIdleDrying(PrinterSlot& p) {
     int16_t tempW = tft.textWidth(tempBuf);
     tft.drawString(tempBuf, cx - 10, 82);
 
-    // Degree symbol - same color, font 4, positioned right of the number
     tft.setTextFont(4);
     tft.setTextDatum(ML_DATUM);
     tft.drawString("'C", cx - 10 + tempW / 2 + 2, 68);
@@ -618,6 +665,7 @@ static void drawIdleDrying(PrinterSlot& p) {
     tft.setTextColor(humidityColor(u.humidity), CLR_BG);
     tft.drawString(humBuf, cx, 170);
   }
+#endif
 
   // === ETA ===
   {
@@ -678,6 +726,12 @@ static void drawIdleDrying(PrinterSlot& p) {
 
 static bool wasNoPrinter = false;
 
+// Forward declarations for 240x320 functions used before their definition
+#if defined(DISPLAY_240x320)
+static bool isLandscape();
+static void drawAmsStrip(const AmsState& ams, int16_t zoneY, int16_t zoneH, int16_t barH);
+#endif
+
 static void drawIdle() {
   if (!isAnyPrinterConfigured()) {
     wasNoPrinter = true;
@@ -724,7 +778,7 @@ static void drawIdle() {
   }
 
   // Effective screen dimensions — idle uses full screen (no AMS sidebar)
-#if defined(DISPLAY_CYD) || defined(DISPLAY_RAK14014)
+#if defined(DISPLAY_240x320)
   const int16_t scrW = (int16_t)tft.width();
   const int16_t scrH = (int16_t)tft.height();
 #else
@@ -735,7 +789,9 @@ static void drawIdle() {
 
   bool animating = tickGaugeSmooth(s, forceRedraw);
   gaugesAnimating = animating;
-  bool stateChanged = forceRedraw || (strcmp(s.gcodeState, prevState.gcodeState) != 0);
+  bool stateChanged = forceRedraw ||
+                      (s.gcodeStateId != prevState.gcodeStateId) ||
+                      (strcmp(s.gcodeState, prevState.gcodeState) != 0);
   bool tempChanged = forceRedraw || animating ||
                      (s.nozzleTemp != prevState.nozzleTemp) ||
                      (s.nozzleTarget != prevState.nozzleTarget) ||
@@ -759,13 +815,13 @@ static void drawIdle() {
     tft.setTextFont(2);
     uint16_t stateColor = CLR_TEXT_DIM;
     const char* stateStr = s.gcodeState;
-    if (strcmp(s.gcodeState, "IDLE") == 0) {
+    if (s.gcodeStateId == GCODE_IDLE) {
       stateColor = CLR_GREEN;
       stateStr = "Ready";
-    } else if (strcmp(s.gcodeState, "FAILED") == 0) {
+    } else if (s.gcodeStateId == GCODE_FAILED) {
       stateColor = CLR_RED;
       stateStr = "ERROR";
-    } else if (strcmp(s.gcodeState, "UNKNOWN") == 0 || s.gcodeState[0] == '\0') {
+    } else if (s.gcodeStateId == GCODE_UNKNOWN) {
       stateStr = "Waiting...";
     }
     tft.fillRect(0, LY_IDLE_STATE_Y, scrW, LY_IDLE_STATE_H, CLR_BG);
@@ -782,7 +838,7 @@ static void drawIdle() {
   {
     static unsigned long unknownSinceMs = 0;
     static bool hintShown = false;
-    bool isUnknown = (strcmp(s.gcodeState, "UNKNOWN") == 0);
+    bool isUnknown = (s.gcodeStateId == GCODE_UNKNOWN);
     if (isUnknown && unknownSinceMs == 0) unknownSinceMs = millis();
     if (!isUnknown) unknownSinceMs = 0;
     bool showHint = isUnknown && unknownSinceMs > 0 &&
@@ -815,6 +871,38 @@ static void drawIdle() {
                   dispSettings.bed.arc, "Bed", nullptr, forceRedraw,
                   &dispSettings.bed, smoothBedTemp);
   }
+
+  // AMS strip on idle (portrait 240x320 only)
+#if defined(DISPLAY_240x320)
+  if (s.ams.present && s.ams.unitCount > 0 && !isLandscape()) {
+    static uint8_t  prevIdleAmsCount = 0;
+    static uint8_t  prevIdleAmsActive = 255;
+    static uint16_t prevIdleAmsColors[AMS_MAX_TRAYS] = {0};
+    static bool     prevIdleAmsPresent[AMS_MAX_TRAYS] = {false};
+    static int8_t   prevIdleAmsRemain[AMS_MAX_TRAYS];
+
+    bool amsChanged = forceRedraw ||
+                      (s.ams.unitCount != prevIdleAmsCount) ||
+                      (s.ams.activeTray != prevIdleAmsActive);
+    if (!amsChanged) {
+      for (uint8_t i = 0; i < s.ams.unitCount * AMS_TRAYS_PER_UNIT && !amsChanged; i++) {
+        amsChanged = (s.ams.trays[i].present != prevIdleAmsPresent[i]) ||
+                     (s.ams.trays[i].colorRgb565 != prevIdleAmsColors[i]) ||
+                     (s.ams.trays[i].remain != prevIdleAmsRemain[i]);
+      }
+    }
+    if (amsChanged) {
+      prevIdleAmsCount = s.ams.unitCount;
+      prevIdleAmsActive = s.ams.activeTray;
+      for (uint8_t i = 0; i < AMS_MAX_TRAYS; i++) {
+        prevIdleAmsPresent[i] = s.ams.trays[i].present;
+        prevIdleAmsColors[i]  = s.ams.trays[i].colorRgb565;
+        prevIdleAmsRemain[i]  = s.ams.trays[i].remain;
+      }
+      drawAmsStrip(s.ams, LY_IDLE_AMS_Y, LY_IDLE_AMS_H, LY_IDLE_AMS_BAR_H);
+    }
+  }
+#endif
 
   // Bottom status bar: Filament/WiFi | Power | Door
   static bool     idlePrevTasmotaOnline = false;
@@ -884,9 +972,9 @@ static void drawIdle() {
 //  Portrait: horizontal strip between gauges and ETA (y=190-246)
 //  Landscape: vertical strip on right side (x=244-316)
 // ---------------------------------------------------------------------------
-#if defined(DISPLAY_CYD) || defined(DISPLAY_RAK14014)
+#if defined(DISPLAY_240x320)
 
-static bool cydLandscape() {
+static bool isLandscape() {
   return (dispSettings.rotation == 1 || dispSettings.rotation == 3);
 }
 
@@ -894,26 +982,102 @@ static uint8_t  prevAmsUnitCount = 0;
 static uint8_t  prevAmsActive    = 255;
 static uint16_t prevAmsTrayColors[AMS_MAX_TRAYS] = {0};
 static bool     prevAmsTrayPresent[AMS_MAX_TRAYS] = {false};
+static int8_t   prevAmsTrayRemain[AMS_MAX_TRAYS];  // init in drawAmsZone
 
-// Helper: draw a single AMS tray bar (used by both portrait and landscape)
+// Helper: draw a single AMS tray bar with optional partial fill for remain%.
+// remain 0-99: color fills bottom portion, CLR_TRACK fills the rest.
+// remain 100 or -1 (unknown): full color as before.
 static void drawAmsTrayBar(int16_t x, int16_t y, int16_t w, int16_t h,
                            const AmsTray& tray, bool isActive) {
   if (tray.present) {
+    int16_t border = isActive ? 2 : 1;
+    uint16_t borderClr = isActive ? TFT_WHITE : CLR_TEXT_DARK;
+
+    // Outer border
+    if (isActive)
+      tft.fillRect(x, y, w, h, borderClr);
+    else
+      tft.drawRect(x, y, w, h, borderClr);
+
+    // Inner fill with optional partial remain%
+    int16_t ix = x + border, iy = y + border;
+    int16_t iw = w - 2 * border, ih = h - 2 * border;
+    bool partialFill = (tray.remain >= 0 && tray.remain < 100);
+
+    if (partialFill) {
+      int16_t fillH = (int16_t)((int32_t)ih * tray.remain / 100);
+      int16_t emptyH = ih - fillH;
+      if (emptyH > 0) tft.fillRect(ix, iy, iw, emptyH, CLR_TRACK);
+      if (fillH > 0)  tft.fillRect(ix, iy + emptyH, iw, fillH, tray.colorRgb565);
+    } else {
+      tft.fillRect(ix, iy, iw, ih, tray.colorRgb565);
+    }
+
+    // Active slot marker triangle
     if (isActive) {
-      tft.fillRect(x, y, w, h, TFT_WHITE);
-      tft.fillRect(x + 2, y + 2, w - 4, h - 4, tray.colorRgb565);
-      // Active slot marker triangle
       tft.fillTriangle(x, y, x + w / 2, y + 8, x + w, y, CLR_BG);
       tft.fillTriangle(x + 2, y + 2, x + w / 2, y + 6, x + w - 2, y + 2, TFT_RED);
-    } else {
-		tft.drawRect(x, y, w, h, CLR_TEXT_DARK);
-		tft.fillRect(x + 1, y + 1, w - 2, h - 2, tray.colorRgb565);
 	}
   } else {
     // Empty slot: outline + diagonal cross to distinguish from black filament
     tft.drawRect(x, y, w, h, CLR_TEXT_DARK);
     tft.drawLine(x, y, x + w - 1, y + h - 1, CLR_TEXT_DARK);
     tft.drawLine(x + w - 1, y, x, y + h - 1, CLR_TEXT_DARK);
+  }
+}
+
+// Portrait AMS strip: horizontal row of tray bars, usable from printing/idle/finished.
+// Draws at (0, zoneY) full width, clears zoneH pixels, bars are barH tall.
+// All groups get uniform width (based on AMS_TRAYS_PER_UNIT slots) so labels
+// stay evenly spaced. Units with fewer trays (e.g. AMS HT = 1) center their
+// bars within the full-width group.
+static void drawAmsStrip(const AmsState& ams,
+                         int16_t zoneY, int16_t zoneH, int16_t barH) {
+  uint8_t units = ams.unitCount;
+  tft.fillRect(0, zoneY, LY_W, zoneH, CLR_BG);
+  if (units == 0 || units > AMS_MAX_UNITS) return;
+
+  const int16_t usableW = LY_W - 2 * LY_AMS_MARGIN;
+
+  // Uniform group width: every group sized for AMS_TRAYS_PER_UNIT bars
+  int16_t barW = (usableW - (units - 1) * LY_AMS_GROUP_GAP
+                  - units * (AMS_TRAYS_PER_UNIT - 1) * LY_AMS_BAR_GAP)
+                 / (units * AMS_TRAYS_PER_UNIT);
+  if (barW > LY_AMS_BAR_MAX_W) barW = LY_AMS_BAR_MAX_W;
+  if (barW < 4) barW = 4;
+
+  int16_t groupW = barW * AMS_TRAYS_PER_UNIT + (AMS_TRAYS_PER_UNIT - 1) * LY_AMS_BAR_GAP;
+  int16_t totalW = groupW * units + (units - 1) * LY_AMS_GROUP_GAP;
+  int16_t startX = (LY_W - totalW) / 2;
+
+  int16_t barY = zoneY + (zoneH - barH - LY_AMS_LABEL_OFFY - 8) / 2;
+  int16_t labelY = barY + barH + LY_AMS_LABEL_OFFY;
+
+  for (uint8_t u = 0; u < units; u++) {
+    int16_t groupX = startX + u * (groupW + LY_AMS_GROUP_GAP);
+
+    uint8_t tc = ams.units[u].trayCount;
+    if (tc == 0) tc = AMS_TRAYS_PER_UNIT;
+
+    // Center actual bars within the uniform group slot
+    int16_t barsW = tc * barW + (tc - 1) * LY_AMS_BAR_GAP;
+    int16_t barsX = groupX + (groupW - barsW) / 2;
+
+    for (uint8_t t = 0; t < tc; t++) {
+      uint8_t trayIdx = u * AMS_TRAYS_PER_UNIT + t;
+      int16_t bx = barsX + t * (barW + LY_AMS_BAR_GAP);
+      drawAmsTrayBar(bx, barY, barW, barH,
+                     ams.trays[trayIdx], trayIdx == ams.activeTray);
+    }
+
+    char label[11];
+	const AmsUnit &cu = ams.units[u];
+	snprintf(label, sizeof(label), "AMS %c %d%%", 'A' + u, cu.humidityRaw);
+	tft.setTextDatum(TC_DATUM);
+    bool sm = dispSettings.smallLabels;
+    tft.setTextFont(sm ? 1 : 2);
+    tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
+    tft.drawString(label, groupX + groupW / 2, labelY + 2);
   }
 }
 
@@ -926,7 +1090,8 @@ static void drawAmsZone(const BambuState& s, bool force) {
     if (!changed) {
       for (uint8_t i = 0; i < s.ams.unitCount * AMS_TRAYS_PER_UNIT && !changed; i++) {
         changed = (s.ams.trays[i].present != prevAmsTrayPresent[i]) ||
-                  (s.ams.trays[i].colorRgb565 != prevAmsTrayColors[i]);
+                  (s.ams.trays[i].colorRgb565 != prevAmsTrayColors[i]) ||
+                  (s.ams.trays[i].remain != prevAmsTrayRemain[i]);
       }
     }
   }
@@ -938,10 +1103,11 @@ static void drawAmsZone(const BambuState& s, bool force) {
   for (uint8_t i = 0; i < AMS_MAX_TRAYS; i++) {
     prevAmsTrayPresent[i] = s.ams.trays[i].present;
     prevAmsTrayColors[i]  = s.ams.trays[i].colorRgb565;
+    prevAmsTrayRemain[i]  = s.ams.trays[i].remain;
   }
 
   uint8_t units = s.ams.unitCount;
-  bool landscape = cydLandscape();
+  bool landscape = isLandscape();
 
   if (landscape) {
     // =====================================================================
@@ -959,8 +1125,15 @@ static void drawAmsZone(const BambuState& s, bool force) {
     const int16_t labelH = 12;  // space for AMS letter label below bars
     const int16_t barGap = 2;   // gap between bars
 
-    // 4 vertical bars side-by-side in the 72px width
-    int16_t barW = (LY_LAND_AMS_W - (AMS_TRAYS_PER_UNIT - 1) * barGap) / AMS_TRAYS_PER_UNIT;
+    // Find max tray count across units for bar width sizing
+    uint8_t maxTC = 0;
+    for (uint8_t u = 0; u < units; u++) {
+      uint8_t tc = s.ams.units[u].trayCount;
+      if (tc == 0) tc = AMS_TRAYS_PER_UNIT;
+      if (tc > maxTC) maxTC = tc;
+    }
+
+    int16_t barW = (LY_LAND_AMS_W - (maxTC - 1) * barGap) / maxTC;
     if (barW > 16) barW = 16;
     if (barW < 4) barW = 4;
 
@@ -970,18 +1143,20 @@ static void drawAmsZone(const BambuState& s, bool force) {
     if (barH > 50) barH = 50;
     if (barH < 10) barH = 10;
 
-    // Center everything
-    int16_t actualGroupW = barW * AMS_TRAYS_PER_UNIT + (AMS_TRAYS_PER_UNIT - 1) * barGap;
-    int16_t barsX = LY_LAND_AMS_X + (LY_LAND_AMS_W - actualGroupW) / 2;
+    // Vertical centering
     int16_t actualGroupH = barH + labelH;
     int16_t totalUsed = actualGroupH * units + (units - 1) * groupGap;
     int16_t startY = LY_LAND_AMS_TOP + (totalH - totalUsed) / 2;
 
     for (uint8_t u = 0; u < units; u++) {
+      uint8_t tc = s.ams.units[u].trayCount;
+      if (tc == 0) tc = AMS_TRAYS_PER_UNIT;
+
+      int16_t actualGroupW = barW * tc + (tc - 1) * barGap;
+      int16_t barsX = LY_LAND_AMS_X + (LY_LAND_AMS_W - actualGroupW) / 2;
       int16_t gy = startY + u * (actualGroupH + groupGap);
 
-      // 4 vertical bars side-by-side
-      for (uint8_t t = 0; t < AMS_TRAYS_PER_UNIT; t++) {
+      for (uint8_t t = 0; t < tc; t++) {
         uint8_t trayIdx = u * AMS_TRAYS_PER_UNIT + t;
         int16_t bx = barsX + t * (barW + barGap);
         drawAmsTrayBar(bx, gy, barW, barH,
@@ -992,7 +1167,7 @@ static void drawAmsZone(const BambuState& s, bool force) {
       char label[11];
 	  const AmsUnit &cu = s.ams.units[u];
 	  snprintf(label, sizeof(label), "AMS %c %d%%", 'A' + u, cu.humidityRaw);
-      tft.setTextDatum(TC_DATUM);
+	  tft.setTextDatum(TC_DATUM);
       bool sm = dispSettings.smallLabels;
       tft.setTextFont(sm ? 1 : 2);
     tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
@@ -1000,50 +1175,11 @@ static void drawAmsZone(const BambuState& s, bool force) {
     }
 
   } else {
-    // =====================================================================
-    //  PORTRAIT: horizontal strip between gauges and ETA (y=190-246)
-    //  AMS groups side by side, each with 4 vertical bars
-    // =====================================================================
-    tft.fillRect(0, LY_AMS_Y, LY_W, LY_AMS_H, CLR_BG);
-
-    if (units == 0 || units > AMS_MAX_UNITS) return;
-
-    const int16_t usableW = LY_W - 2 * LY_AMS_MARGIN;
-    int16_t groupW = (usableW - (units - 1) * LY_AMS_GROUP_GAP) / units;
-    int16_t barW = (groupW - (AMS_TRAYS_PER_UNIT - 1) * LY_AMS_BAR_GAP) / AMS_TRAYS_PER_UNIT;
-    if (barW > LY_AMS_BAR_MAX_W) barW = LY_AMS_BAR_MAX_W;
-    if (barW < 4) barW = 4;
-
-    int16_t actualGroupW = barW * AMS_TRAYS_PER_UNIT + (AMS_TRAYS_PER_UNIT - 1) * LY_AMS_BAR_GAP;
-    int16_t totalW = actualGroupW * units + (units - 1) * LY_AMS_GROUP_GAP;
-    int16_t startX = (LY_W - totalW) / 2;
-
-    int16_t barY = LY_AMS_Y + (LY_AMS_H - LY_AMS_BAR_H - LY_AMS_LABEL_OFFY - 8) / 2;
-    int16_t labelY = barY + LY_AMS_BAR_H + LY_AMS_LABEL_OFFY;
-
-    for (uint8_t u = 0; u < units; u++) {
-      int16_t groupX = startX + u * (actualGroupW + LY_AMS_GROUP_GAP);
-
-      for (uint8_t t = 0; t < AMS_TRAYS_PER_UNIT; t++) {
-        uint8_t trayIdx = u * AMS_TRAYS_PER_UNIT + t;
-        int16_t bx = groupX + t * (barW + LY_AMS_BAR_GAP);
-        drawAmsTrayBar(bx, barY, barW, LY_AMS_BAR_H,
-                       s.ams.trays[trayIdx], trayIdx == s.ams.activeTray);
-      }
-
-      char label[11];
-	  const AmsUnit &cu = s.ams.units[u];
-	  snprintf(label, sizeof(label), "AMS %c %d%%", 'A' + u, cu.humidityRaw);
-	  tft.setTextDatum(TC_DATUM);
-      bool sm = dispSettings.smallLabels;
-      tft.setTextFont(sm ? 1 : 2);
-      tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
-      tft.drawString(label, groupX + actualGroupW / 2, labelY + 2);
-    }
+    drawAmsStrip(s.ams, LY_AMS_Y, LY_AMS_H, LY_AMS_BAR_H);
   }
 }
 
-#endif // DISPLAY_CYD
+#endif // DISPLAY_240x320
 
 // ---------------------------------------------------------------------------
 //  Helper: draw WiFi signal indicator in bottom-left corner
@@ -1071,6 +1207,7 @@ static void drawPrinting() {
   bool etaChanged = forceRedraw ||
                      (s.remainingMinutes != prevState.remainingMinutes);
   bool stateChanged = forceRedraw ||
+                      (s.gcodeStateId != prevState.gcodeStateId) ||
                       (strcmp(s.gcodeState, prevState.gcodeState) != 0);
 
   // 2x3 gauge grid constants (from layout profile)
@@ -1078,8 +1215,8 @@ static void drawPrinting() {
   const int16_t gT = LY_GAUGE_T;
 
   // Effective Y positions — landscape on CYD uses 240x240-style positions
-#if defined(DISPLAY_CYD) || defined(DISPLAY_RAK14014)
-  const bool land = cydLandscape();
+#if defined(DISPLAY_240x320)
+  const bool land = isLandscape();
   const int16_t eff_etaY     = land ? LY_LAND_ETA_Y     : LY_ETA_Y;
   const int16_t eff_etaH     = land ? LY_LAND_ETA_H     : LY_ETA_H;
   const int16_t eff_etaTextY = land ? LY_LAND_ETA_TEXT_Y : LY_ETA_TEXT_Y;
@@ -1096,7 +1233,7 @@ static void drawPrinting() {
 #endif
 
   // === CYD: clear unused zone on screen transitions ===
-#if defined(DISPLAY_CYD) || defined(DISPLAY_RAK14014)
+#if defined(DISPLAY_240x320)
   if (forceRedraw) {
     int16_t scrW = (int16_t)tft.width();
     int16_t scrH = (int16_t)tft.height();
@@ -1129,10 +1266,10 @@ static void drawPrinting() {
 
     // State badge (right)
     uint16_t badgeColor = CLR_TEXT_DIM;
-    if (strcmp(s.gcodeState, "RUNNING") == 0) badgeColor = CLR_GREEN;
-    else if (strcmp(s.gcodeState, "PAUSE") == 0) badgeColor = CLR_YELLOW;
-    else if (strcmp(s.gcodeState, "FAILED") == 0) badgeColor = CLR_RED;
-    else if (strcmp(s.gcodeState, "PREPARE") == 0) badgeColor = CLR_BLUE;
+    if (s.gcodeStateId == GCODE_RUNNING) badgeColor = CLR_GREEN;
+    else if (s.gcodeStateId == GCODE_PAUSE) badgeColor = CLR_YELLOW;
+    else if (s.gcodeStateId == GCODE_FAILED) badgeColor = CLR_RED;
+    else if (s.gcodeStateId == GCODE_PREPARE) badgeColor = CLR_BLUE;
 
     tft.setTextDatum(MR_DATUM);
     tft.setTextColor(badgeColor, hdrBg);
@@ -1269,7 +1406,7 @@ static void drawPrinting() {
     }
 
   // === AMS zone (CYD: portrait + landscape) ===
-#if defined(DISPLAY_CYD) || defined(DISPLAY_RAK14014)
+#if defined(DISPLAY_240x320)
   if (s.ams.present && s.ams.unitCount > 0) {
 	drawAmsZone(s, forceRedraw);
   }
@@ -1280,11 +1417,11 @@ static void drawPrinting() {
     tft.fillRect(0, eff_etaY, SCREEN_W, eff_etaH, CLR_BG);
     tft.setTextDatum(MC_DATUM);
 
-    if (strcmp(s.gcodeState, "PAUSE") == 0) {
+    if (s.gcodeStateId == GCODE_PAUSE) {
       tft.setTextFont(4);
       tft.setTextColor(CLR_YELLOW, CLR_BG);
       tft.drawString("PAUSED", SCREEN_W / 2, eff_etaTextY);
-    } else if (strcmp(s.gcodeState, "FAILED") == 0) {
+    } else if (s.gcodeStateId == GCODE_FAILED) {
       tft.setTextFont(4);
       tft.setTextColor(CLR_RED, CLR_BG);
       tft.drawString("ERROR!", SCREEN_W / 2, eff_etaTextY);
@@ -1452,8 +1589,8 @@ static void drawFinished() {
   static float prevFinKwh = -2.0f;
 
   // Effective screen dimensions — finished uses full screen (no AMS sidebar)
-#if defined(DISPLAY_CYD) || defined(DISPLAY_RAK14014)
-  const bool land = cydLandscape();
+#if defined(DISPLAY_240x320)
+  const bool land = isLandscape();
   const int16_t scrW = (int16_t)tft.width();
   const int16_t eff_finBotY  = land ? LY_LAND_FIN_BOT_Y  : LY_FIN_BOT_Y;
   const int16_t eff_finBotH  = land ? LY_LAND_FIN_BOT_H  : LY_FIN_BOT_H;
@@ -1553,7 +1690,11 @@ static void drawFinished() {
                     (tasmotaActiveHere != prevFinTasmotaOnline) ||
                     (finishKwh != prevFinKwh);
   if (forceRedraw || kwhChanged) {
+#if defined(DISPLAY_240x320)
+    int16_t kwhY = land ? (LY_FIN_FILE_Y + eff_finBotY) / 2 : LY_FIN_KWH_Y;
+#else
     int16_t kwhY = (LY_FIN_FILE_Y + eff_finBotY) / 2;
+#endif
     tft.fillRect(0, kwhY - 9, scrW, 18, CLR_BG);
     if (tasmotaActiveHere && finishKwh >= 0.0f) {
         drawIcon16(tft, cx - 32, kwhY - 8, icon_lightning, CLR_YELLOW);
@@ -1566,6 +1707,38 @@ static void drawFinished() {
       }
     }
   prevFinKwh = finishKwh;
+
+  // === AMS strip (portrait 240x320 only) ===
+#if defined(DISPLAY_240x320)
+  if (!land && s.ams.present && s.ams.unitCount > 0) {
+    static uint8_t  prevFinAmsCount = 0;
+    static uint8_t  prevFinAmsActive = 255;
+    static uint16_t prevFinAmsColors[AMS_MAX_TRAYS] = {0};
+    static bool     prevFinAmsPresent[AMS_MAX_TRAYS] = {false};
+    static int8_t   prevFinAmsRemain[AMS_MAX_TRAYS];
+
+    bool amsChanged = forceRedraw ||
+                      (s.ams.unitCount != prevFinAmsCount) ||
+                      (s.ams.activeTray != prevFinAmsActive);
+    if (!amsChanged) {
+      for (uint8_t i = 0; i < s.ams.unitCount * AMS_TRAYS_PER_UNIT && !amsChanged; i++) {
+        amsChanged = (s.ams.trays[i].present != prevFinAmsPresent[i]) ||
+                     (s.ams.trays[i].colorRgb565 != prevFinAmsColors[i]) ||
+                     (s.ams.trays[i].remain != prevFinAmsRemain[i]);
+      }
+    }
+    if (amsChanged) {
+      prevFinAmsCount = s.ams.unitCount;
+      prevFinAmsActive = s.ams.activeTray;
+      for (uint8_t i = 0; i < AMS_MAX_TRAYS; i++) {
+        prevFinAmsPresent[i] = s.ams.trays[i].present;
+        prevFinAmsColors[i]  = s.ams.trays[i].colorRgb565;
+        prevFinAmsRemain[i]  = s.ams.trays[i].remain;
+      }
+      drawAmsStrip(s.ams, LY_FIN_AMS_Y, LY_FIN_AMS_H, LY_FIN_AMS_BAR_H);
+    }
+  }
+#endif
 
   // === Bottom status bar ===
   bool waitingForDoor = dpSettings.doorAckEnabled && s.doorSensorPresent && !s.doorAcknowledged;
@@ -1673,6 +1846,19 @@ void updateDisplay() {
   if (currentScreen == SCREEN_PRINTING) {
     BambuState& sh = displayedPrinter().state;
     tickProgressShimmer(tft, 0, sh.progress, sh.printing);
+  }
+  if (currentScreen == SCREEN_IDLE && isPrinterConfigured(rotState.displayIndex)) {
+    BambuState& sh = displayedPrinter().state;
+    if (sh.ams.anyDrying) {
+      uint8_t dp = 0;
+      AmsUnit* du = nullptr;
+      for (uint8_t i = 0; i < sh.ams.unitCount; i++) {
+        if (sh.ams.units[i].dryRemainMin > 0) { du = &sh.ams.units[i]; break; }
+      }
+      if (du && du->dryTotalMin > 0 && du->dryRemainMin <= du->dryTotalMin)
+        dp = 100 - (uint8_t)((uint32_t)du->dryRemainMin * 100 / du->dryTotalMin);
+      tickProgressShimmer(tft, 0, dp, true);
+    }
   }
   // Pong clock runs at ~50fps, independent of display refresh
   if (currentScreen == SCREEN_CLOCK && dispSettings.pongClock) {

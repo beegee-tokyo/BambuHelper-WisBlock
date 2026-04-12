@@ -182,6 +182,21 @@ static MqttConn* findConnBySerial(const char* serial, size_t serialLen) {
   return nullptr;
 }
 
+// Map raw (unitId, trayInUnit) to sequential flat index.
+// Raw unit ids may be non-sequential (e.g. 128 for AMS HT).
+static uint8_t normalizeTrayIndex(const AmsState& ams,
+                                  uint8_t rawUnitId, uint8_t trayInUnit) {
+  if (trayInUnit >= AMS_TRAYS_PER_UNIT) return 255;
+  for (uint8_t i = 0; i < ams.unitCount; i++) {
+    if (ams.units[i].id == rawUnitId)
+      return i * AMS_TRAYS_PER_UNIT + trayInUnit;
+  }
+  // Fallback: AMS2 compat (rawId 0-3 == seqIdx)
+  if (rawUnitId < AMS_MAX_UNITS)
+    return rawUnitId * AMS_TRAYS_PER_UNIT + trayInUnit;
+  return 255;
+}
+
 // ---------------------------------------------------------------------------
 //  Parse MQTT payload into a BambuState (extracted for routing)
 // ---------------------------------------------------------------------------
@@ -220,6 +235,11 @@ static void parseMqttPayload(byte* payload, unsigned int length,
     return;
   }
 
+  // Deferred activeTray sources (resolved after AMS unit loop)
+  uint8_t pendingSnowAmsId = 255;   // raw AMS unit id from snow
+  uint8_t pendingSnowTrayIdx = 0;
+  bool    hasSnowData = false;       // true when snow was parsed for active nozzle
+
   // H2D/H2C dual nozzle: parse extruder directly from raw payload
   // (bypasses ArduinoJson filter which strips it due to deep nesting)
   const char* extPos = (const char*)memmem(payload, length, "\"extruder\":", 11);
@@ -245,15 +265,17 @@ static void parseMqttPayload(byte* payload, unsigned int length,
             if (!entry["id"].is<int>()) continue;
             uint8_t id = entry["id"].as<int>();
 
-            // Extract snow (per-nozzle active tray) for debug and active nozzle
+            // Extract snow (per-nozzle active tray) - defer normalization
+            // until after AMS units are parsed (need units[].id mapping)
             if (entry["snow"].is<unsigned int>()) {
               uint32_t snow = entry["snow"].as<unsigned int>();
               uint8_t amsIdx  = snow >> 8;
               uint8_t trayIdx = snow & 0x03;
-              uint8_t trayFlat = amsIdx * AMS_TRAYS_PER_UNIT + trayIdx;
-              MQTT_LOG("nozzle[%d] snow=%u -> ams=%d tray=%d (flat=%d)", id, snow, amsIdx, trayIdx, trayFlat);
+              MQTT_LOG("nozzle[%d] snow=%u -> ams=%d tray=%d", id, snow, amsIdx, trayIdx);
               if (id == s.activeNozzle) {
-                s.ams.activeTray = trayFlat;
+                pendingSnowAmsId = amsIdx;
+                pendingSnowTrayIdx = trayIdx;
+                hasSnowData = true;
               }
             }
 
@@ -302,16 +324,44 @@ static void parseMqttPayload(byte* payload, unsigned int length,
         JsonDocument amsDoc;
         if (!deserializeJson(amsDoc, amsObj, (size_t)(end - amsObj))) {
           s.ams.present = true;
+          JsonArray units = amsDoc["ams"];
+          bool hasTraySnapshot = false;
+          for (JsonObject unit : units) {
+            if (unit["tray"].is<JsonArray>()) {
+              hasTraySnapshot = true;
+              break;
+            }
+          }
+
+          bool hasExplicitTrayNow = amsDoc["tray_now"].is<const char*>() && !s.dualNozzle;
+          uint8_t rawTrayNow = 255;
+          if (hasExplicitTrayNow) rawTrayNow = atoi(amsDoc["tray_now"].as<const char*>());
+
+          if (hasTraySnapshot) {
           s.ams.unitCount = 0;
 
-          // tray_now: flat tray index from the printer. For dual nozzle (H2D/H2C)
-          // this only reflects one nozzle, so skip it - the per-nozzle snow field
-          // from extruder.info[] is authoritative (parsed above).
-          if (amsDoc["tray_now"].is<const char*>() && !s.dualNozzle)
-            s.ams.activeTray = atoi(amsDoc["tray_now"].as<const char*>());
+            // Reset tray data so vanished trays don't linger, but only when
+            // the payload carries an actual tray snapshot. Partial cloud
+            // updates often omit tray arrays and should keep the cached view.
+            memset(s.ams.trays, 0, sizeof(s.ams.trays));
+            for (auto& t : s.ams.trays) t.remain = -1;
+
+            // Reset unit runtime fields, preserve drying state
+            for (auto& u : s.ams.units) {
+              uint16_t savedDryTotal = u.dryTotalMin;
+              uint16_t savedDryRemain = u.dryRemainMin;
+              memset(&u, 0, sizeof(u));
+              u.dryTotalMin = savedDryTotal;
+              u.dryRemainMin = savedDryRemain;
+            }
 
           s.ams.anyDrying = false;
-          JsonArray units = amsDoc["ams"];
+
+            // Reset external spool - re-populated if vt_tray present in this message
+            s.ams.vtPresent = false;
+            s.ams.vtType[0] = '\0';
+            s.ams.vtColorRgb565 = 0;
+
           uint8_t unitIdx = 0;  // sequential index for unit-level storage
           for (JsonObject unit : units) {
             if (!unit["id"].is<const char*>()) continue;
@@ -325,7 +375,6 @@ static void parseMqttPayload(byte* payload, unsigned int length,
             u.id = uid;
             if (!unit["dry_time"].isNull()) {
               uint16_t dt = unit["dry_time"].as<uint16_t>();
-              // Capture total when drying starts (or after reboot mid-drying)
               if (dt > 0 && (u.dryRemainMin == 0 || dt > u.dryTotalMin))
                 u.dryTotalMin = dt;
               if (dt == 0) u.dryTotalMin = 0;
@@ -339,18 +388,18 @@ static void parseMqttPayload(byte* payload, unsigned int length,
               u.temp = atof(unit["temp"].as<const char*>());
             if (u.dryRemainMin > 0) s.ams.anyDrying = true;
 
+              // Tray data - use sequential index, not raw uid
+              uint8_t seqIdx = unitIdx;
             unitIdx++;
 
-            // Tray data (skip if uid out of range for tray indexing, e.g. AMS HT id=128)
-            if (uid >= AMS_MAX_UNITS) continue;
-
             JsonArray trays = unit["tray"];
+              uint8_t parsedTrays = 0;
             for (JsonObject tray : trays) {
               if (!tray["id"].is<const char*>()) continue;
               uint8_t tid = atoi(tray["id"].as<const char*>());
               if (tid >= AMS_TRAYS_PER_UNIT) continue;
 
-              uint8_t idx = uid * AMS_TRAYS_PER_UNIT + tid;
+                uint8_t idx = seqIdx * AMS_TRAYS_PER_UNIT + tid;
               AmsTray& t = s.ams.trays[idx];
 
               if (tray["tray_type"].is<const char*>()) {
@@ -360,7 +409,6 @@ static void parseMqttPayload(byte* payload, unsigned int length,
                   t.colorRgb565 = bambuColorToRgb565(colorStr);
                   MQTT_LOG("AMS tray %d color: \"%s\" -> 0x%04X", idx, colorStr, t.colorRgb565);
                 }
-                // Prefer tray_sub_brands (more descriptive), fallback to tray_type
                 const char* name = nullptr;
                 if (tray["tray_sub_brands"].is<const char*>() &&
                     strlen(tray["tray_sub_brands"].as<const char*>()) > 0)
@@ -368,12 +416,61 @@ static void parseMqttPayload(byte* payload, unsigned int length,
                 else
                   name = tray["tray_type"].as<const char*>();
                 if (name) strlcpy(t.type, name, sizeof(t.type));
+                  t.remain = tray["remain"].is<int>() ? (int8_t)tray["remain"].as<int>() : -1;
               } else {
                 t.present = false;
                 t.type[0] = '\0';
               }
+                parsedTrays++;
             }
+              u.trayCount = parsedTrays;
           }
+          } else if (!units.isNull()) {
+            MQTT_LOG("AMS partial update without tray snapshot - keeping cached trays");
+          }
+
+          // --- activeTray normalization (after units are populated) ---
+          // Snow special values (from pushall_dump.json):
+          //   0xFFFF (65535) -> amsIdx=255 = no active tray
+          //   0xFEFF (65279) -> amsIdx=254 = external spool
+          // These mirror tray_now sentinels: 255=none, 254=external.
+          if (s.dualNozzle) {
+            if (pendingSnowAmsId == 254) {
+              s.ams.activeTray = 254;  // external spool sentinel
+              MQTT_LOG("activeTray: snow external spool (amsId=254)");
+            } else if (pendingSnowAmsId != 255) {
+              uint8_t normalized = normalizeTrayIndex(s.ams, pendingSnowAmsId, pendingSnowTrayIdx);
+              if (normalized != 255) {
+                s.ams.activeTray = normalized;
+              } else {
+                MQTT_LOG("activeTray: snow ams=%d tray=%d unresolved - keeping cached=%d",
+                         pendingSnowAmsId, pendingSnowTrayIdx, s.ams.activeTray);
+              }
+            } else if (hasSnowData) {
+              // snow was present but amsIdx==255 means "no active tray"
+              s.ams.activeTray = 255;
+              MQTT_LOG("activeTray: snow reports no active tray");
+            }
+            // else: no extruder/snow data in this message - keep cached activeTray
+          } else if (hasExplicitTrayNow) {
+            if (rawTrayNow == 254) {
+              s.ams.activeTray = 254;  // external spool sentinel
+            } else if (rawTrayNow == 255) {
+              s.ams.activeTray = 255;  // explicit "no active tray" from printer
+            } else {
+              uint8_t rawUnit = rawTrayNow / AMS_TRAYS_PER_UNIT;
+              uint8_t rawTray = rawTrayNow % AMS_TRAYS_PER_UNIT;
+              uint8_t normalized = normalizeTrayIndex(s.ams, rawUnit, rawTray);
+              if (normalized != 255) {
+                s.ams.activeTray = normalized;
+              } else {
+                MQTT_LOG("activeTray: tray_now=%d unresolved - keeping cached=%d",
+                         rawTrayNow, s.ams.activeTray);
+              }
+            }
+            MQTT_LOG("activeTray: tray_now=%d -> normalized=%d", rawTrayNow, s.ams.activeTray);
+          }
+
           MQTT_LOG("AMS: %d units, active tray=%d, drying=%s",
                    s.ams.unitCount, s.ams.activeTray,
                    s.ams.anyDrying ? "YES" : "no");
@@ -426,12 +523,9 @@ static void parseMqttPayload(byte* payload, unsigned int length,
 
   if (print["gcode_state"].is<const char*>()) {
     const char* state = print["gcode_state"];
-    strncpy(s.gcodeState, state, 15);
-    s.gcodeState[15] = '\0';
+    setPrinterGcodeStateRaw(s, state);
     bool wasActive = s.printing;
-    s.printing = (strcmp(state, "RUNNING") == 0 ||
-                  strcmp(state, "PAUSE") == 0 ||
-                  strcmp(state, "PREPARE") == 0);
+    s.printing = isPrintingGcodeState(s.gcodeStateId);
     if (s.printing) {
       idleSince = 0;
     } else if (wasActive || idleSince == 0) {
@@ -795,10 +889,10 @@ static void handleConn(MqttConn& c) {
         s.printing = false;
         // Also reset gcodeState - otherwise state machine shows SCREEN_IDLE
         // with "RUNNING" text (2 gauges) instead of SCREEN_PRINTING (6 gauges)
-        strlcpy(s.gcodeState, "IDLE", sizeof(s.gcodeState));
+        setPrinterGcodeStateCanonical(s, GCODE_IDLE);
         c.stalePushallSentMs = 0;
       }
-    } else if (strcmp(s.gcodeState, "FINISH") == 0) {
+    } else if (s.gcodeStateId == GCODE_FINISH) {
       // Keep FINISH visible for at least the configured timeout, but do not let
       // a silent printer leave the dashboard stuck on frozen completion data.
       unsigned long finishHoldMs = staleMs;
@@ -817,18 +911,18 @@ static void handleConn(MqttConn& c) {
                    millis() - c.stalePushallSentMs > 30000) {
           MQTT_LOG("[%d] stale finish - clearing cached state", c.slotIndex);
           clearLiveMetrics(s);
-          strlcpy(s.gcodeState, "UNKNOWN", sizeof(s.gcodeState));
+          setPrinterGcodeStateCanonical(s, GCODE_UNKNOWN);
           c.stalePushallSentMs = 0;
         }
       }
     } else if (isConnected && isCloudMode(cfg.mode) &&
-               strcmp(s.gcodeState, "IDLE") == 0) {
+               s.gcodeStateId == GCODE_IDLE) {
       // Cloud broker connected but idle printer is unresponsive (powered off).
       // IDLE can be cleared immediately; FINISH has its own grace window above
       // and FAILED is intentionally left untouched.
       MQTT_LOG("[%d] stale idle on cloud - clearing cached state", c.slotIndex);
       clearLiveMetrics(s);
-      strlcpy(s.gcodeState, "UNKNOWN", sizeof(s.gcodeState));
+      setPrinterGcodeStateCanonical(s, GCODE_UNKNOWN);
       // Single recovery pushall - if printer just came back online this
       // gets fresh data immediately.  No periodic retries to avoid
       // access_denied (TLS alert 49) on the cloud broker.
@@ -917,7 +1011,7 @@ void initBambuMqtt() {
 
     BambuState& s = printers[i].state;
     memset(&s, 0, sizeof(BambuState));
-    strlcpy(s.gcodeState, "UNKNOWN", sizeof(s.gcodeState));
+    setPrinterGcodeStateCanonical(s, GCODE_UNKNOWN);
 
     if (isPrinterConfigured(i)) {
       c.active = true;
@@ -965,7 +1059,7 @@ void requestCloudRefresh(uint8_t slot) {
   BambuState& s = printers[slot].state;
   if (!isCloudMode(cfg.mode)) return;
   if (!c.mqtt || !c.mqtt->connected()) return;
-  if (strcmp(s.gcodeState, "UNKNOWN") != 0) return;
+  if (s.gcodeStateId != GCODE_UNKNOWN) return;
   // Debounce: at most once per 5 seconds
   static unsigned long lastRefreshMs = 0;
   if (lastRefreshMs > 0 && millis() - lastRefreshMs < 5000) return;

@@ -4,7 +4,7 @@
 // =============================================================================
 //  Firmware version
 // =============================================================================
-#define FW_VERSION          "v2.7Beta1"
+#define FW_VERSION          "v2.7"
 
 // Board variant — injected into the web UI for OTA asset filtering.
 // Normally set via build_flags in platformio.ini; this is a fallback.
@@ -96,7 +96,7 @@
 // =============================================================================
 //  Physical button
 // =============================================================================
-#ifdef DISPLAY_CYD
+#ifdef DISPLAY_240x320
 #define BUTTON_DEFAULT_PIN    0       // CYD: GPIO4 is RGB LED, not usable
 #else
 #define BUTTON_DEFAULT_PIN    4       // default GPIO for physical button

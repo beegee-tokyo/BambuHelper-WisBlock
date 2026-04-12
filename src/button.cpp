@@ -14,7 +14,7 @@
   static bool cst816Ready = false;
 #elif defined(TOUCH_CS)
   #include "display_ui.h"  // extern tft for getTouch()
-#elif defined(DISPLAY_RAK14014)
+#elif defined(_VARIANT_RAK3112_)
 #include "RAK14014_FT6336U.h"
 /** Touch screen driver instance */
 FT6336U ft6336u;
@@ -59,14 +59,14 @@ static void keyIntHandle(void)
 		  Serial.println("CST816 touch initialized (I2C)");
 		  return;
 	  }
-#elif defined(DISPLAY_RAK14014)
-	  if (buttonType == BTN_TOUCHSCREEN) { // RAK14014 touch screen
+#elif defined(_VARIANT_RAK3112_)
+	  // if (buttonType == BTN_TOUCHSCREEN) { // RAK14014 touch screen enforced
 		  ft6336u.begin();
 		  attachInterrupt(digitalPinToInterrupt(WB_IO6), keyIntHandle, FALLING);
 		  BTN_LOG("BTN initialized");
-		  buttonType = BTN_PUSH;
+		  buttonType = BTN_TOUCHSCREEN;
 		  return;
-	  }
+	  // }
 #endif
 	  if (buttonType == BTN_TOUCHSCREEN) return;
 	  if (buttonPin == 0) return;
@@ -101,7 +101,7 @@ bool wasButtonPressed() {
 #elif defined(TOUCH_CS)
     uint16_t tx, ty;
     raw = tft.getTouch(&tx, &ty);
-#eiif defined(DISPLAY_RAK14014)
+#elif defined(_VARIANT_RAK3112_)
 	if (wait_for_touch) {
 		return false;
 	} else {

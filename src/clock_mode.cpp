@@ -31,17 +31,13 @@ void resetClock() {
 static int clkDigitX(int i) {
   if ((dispSettings.rotation == 1 || dispSettings.rotation == 3)) {
     int clk_time_x_l = ((LY_H - CLK_TIME_W) / 2);
-    if (i < 2)
-      return clk_time_x_l + i * CLK_DIGIT_W;
-    if (i == 2)
-      return clk_time_x_l + 2 * CLK_DIGIT_W; // colon
-    return clk_time_x_l + 2 * CLK_DIGIT_W + CLK_COLON_W + (i - 3) * CLK_DIGIT_W;
+    if (i < 2) return clk_time_x_l + i * CLK_DIGIT_W;
+    if (i == 2) return clk_time_x_l + 2 * CLK_DIGIT_W; // colon
+      return clk_time_x_l + 2 * CLK_DIGIT_W + CLK_COLON_W + (i - 3) * CLK_DIGIT_W;
   } else {
-    if (i < 2)
-      return CLK_TIME_X + i * CLK_DIGIT_W;
-    if (i == 2)
-      return CLK_TIME_X + 2 * CLK_DIGIT_W; // colon
-    return CLK_TIME_X + 2 * CLK_DIGIT_W + CLK_COLON_W + (i - 3) * CLK_DIGIT_W;
+    if (i < 2) return CLK_TIME_X + i * CLK_DIGIT_W;
+    if (i == 2) return CLK_TIME_X + 2 * CLK_DIGIT_W; // colon
+      return CLK_TIME_X + 2 * CLK_DIGIT_W + CLK_COLON_W + (i - 3) * CLK_DIGIT_W;
   }
 }
 
@@ -119,28 +115,31 @@ void drawClock() {
   // --- AM/PM (12h mode) / clear stale AM/PM when switching to 24h ---
   int ly_w_clk;
   if ((dispSettings.rotation == 1 || dispSettings.rotation == 3)) {
-    ly_w_clk = LY_H;
+	  ly_w_clk = LY_H;
   } else {
-    ly_w_clk = LY_W;
+	  ly_w_clk = LY_W;
   }
-
-  if (!netSettings.use24h){
-    const char *ampm = now.tm_hour < 12 ? "AM" : "PM";
-    if (strcmp(ampm, prevAmPm) != 0) {
-      tft.setTextDatum(MC_DATUM);
-      tft.setTextFont(4);
-      tft.setTextColor(dateClr, bg);
-      int ampmW = tft.textWidth("PM");
-      tft.fillRect(ly_w_clk / 2 - ampmW / 2 - 2, LY_CLK_AMPM_Y - 12, ampmW + 4, 24, bg);
-      tft.drawString(ampm, ly_w_clk / 2, LY_CLK_AMPM_Y);
-      strlcpy(prevAmPm, ampm, sizeof(prevAmPm));
-    }
-  } else if (prevAmPm[0] != '\0') {
-    tft.setTextDatum(MC_DATUM);
-    tft.setTextFont(4);
-    int ampmW = tft.textWidth("PM");
-    tft.fillRect(ly_w_clk / 2 - ampmW / 2 - 2, LY_CLK_AMPM_Y - 12, ampmW + 4, 24, bg);
-    prevAmPm[0] = '\0';
+  if (!netSettings.use24h)
+  {
+	  const char *ampm = now.tm_hour < 12 ? "AM" : "PM";
+	  if (strcmp(ampm, prevAmPm) != 0)
+	  {
+		  tft.setTextDatum(MC_DATUM);
+		  tft.setTextFont(4);
+		  tft.setTextColor(dateClr, bg);
+		  int ampmW = tft.textWidth("PM");
+		  tft.fillRect(ly_w_clk / 2 - ampmW / 2 - 2, LY_CLK_AMPM_Y - 12, ampmW + 4, 24, bg);
+		  tft.drawString(ampm, ly_w_clk / 2, LY_CLK_AMPM_Y);
+		  strlcpy(prevAmPm, ampm, sizeof(prevAmPm));
+	  }
+  }
+  else if (prevAmPm[0] != '\0')
+  {
+	  tft.setTextDatum(MC_DATUM);
+	  tft.setTextFont(4);
+	  int ampmW = tft.textWidth("PM");
+	  tft.fillRect(ly_w_clk / 2 - ampmW / 2 - 2, LY_CLK_AMPM_Y - 12, ampmW + 4, 24, bg);
+	  prevAmPm[0] = '\0';
   }
 
   // --- Date ---
@@ -165,8 +164,8 @@ void drawClock() {
     int dateW = tft.textWidth(prevDateBuf[0] ? prevDateBuf : dateBuf);
     int newW = tft.textWidth(dateBuf);
     int clearW = (dateW > newW) ? dateW : newW;
-    tft.fillRect(ly_w_clk / 2 - clearW / 2 - 2, LY_CLK_DATE_Y - 12, clearW + 4, 24, bg);
-    tft.drawString(dateBuf, ly_w_clk / 2, LY_CLK_DATE_Y);
-    strlcpy(prevDateBuf, dateBuf, sizeof(prevDateBuf));
+	tft.fillRect(ly_w_clk / 2 - clearW / 2 - 2, LY_CLK_DATE_Y - 12, clearW + 4, 24, bg);
+	tft.drawString(dateBuf, ly_w_clk / 2, LY_CLK_DATE_Y);
+	strlcpy(prevDateBuf, dateBuf, sizeof(prevDateBuf));
   }
 }

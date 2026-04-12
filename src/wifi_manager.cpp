@@ -15,6 +15,8 @@ static unsigned long probeStartTime = 0;
 static bool staProbing = false;
 static unsigned long phase3StartTime = 0;
 static String apSSID;
+static bool splashStaStarted = false;
+static unsigned long splashStaStartMs = 0;
 
 bool isWiFiConnected() {
   return WiFi.status() == WL_CONNECTED;
@@ -63,31 +65,105 @@ static void startAP() {
   setScreenState(SCREEN_AP_MODE);
 }
 
+static void applyStaticNetworkConfig() {
+  if (netSettings.useDHCP || netSettings.staticIP[0] == '\0') return;
+
+  IPAddress ip, gw, sn, dns;
+  bool ipOk = ip.fromString(netSettings.staticIP);
+  bool gwOk = gw.fromString(netSettings.gateway);
+  bool snOk = sn.fromString(netSettings.subnet);
+
+  if (!ipOk || !gwOk || !snOk) {
+    Serial.printf("Static IP config invalid, falling back to DHCP (ip=%d gw=%d sn=%d)\n",
+                  (int)ipOk, (int)gwOk, (int)snOk);
+    return;
+  }
+
+  bool customDns = (netSettings.dns[0] != '\0');
+  if (customDns) {
+    if (!dns.fromString(netSettings.dns)) {
+      dns = gw;
+      Serial.printf("Static IP: invalid DNS '%s', falling back to gateway %s\n",
+                    netSettings.dns, netSettings.gateway);
+    }
+  } else {
+    dns = gw;
+  }
+
+  String dnsStr = dns.toString();
+  bool applied = WiFi.config(ip, gw, sn, dns);
+  if (applied) {
+    Serial.printf("Static IP: %s GW: %s SN: %s DNS: %s\n",
+                  netSettings.staticIP, netSettings.gateway,
+                  netSettings.subnet, dnsStr.c_str());
+  } else {
+    Serial.printf("Static IP: WiFi.config() failed for IP=%s GW=%s SN=%s DNS=%s\n",
+                  netSettings.staticIP, netSettings.gateway,
+                  netSettings.subnet, dnsStr.c_str());
+  }
+}
+
+static void completeWiFiStartup() {
+  Serial.printf("WiFi connected! IP: %s\n",
+                WiFi.localIP().toString().c_str());
+  stopAP();
+  apMode = false;
+  disconnectTime = 0;
+  reconnectAttempts = 0;
+  splashStaStarted = false;
+
+  // Sync time via NTP with automatic DST
+  configTzTime(netSettings.timezoneStr, "pool.ntp.org", "time.nist.gov");
+  Serial.printf("NTP configured: %s\n", netSettings.timezoneStr);
+
+  // Show IP screen for 1.5 seconds if enabled
+  if (netSettings.showIPAtStartup) {
+    setScreenState(SCREEN_WIFI_CONNECTED);
+    unsigned long ipStart = millis();
+    while (millis() - ipStart < 1500) {
+      updateDisplay();
+      delay(50);
+    }
+  }
+}
+
+static void beginStaConnectAttempt() {
+  WiFi.mode(WIFI_STA);
+  applyStaticNetworkConfig();
+  WiFi.begin(wifiSSID, wifiPass);
+}
+
+void startWiFiDuringSplash() {
+  if (strlen(wifiSSID) == 0) return;
+
+  Serial.printf("WiFi: starting background connect during splash: %s\n", wifiSSID);
+  beginStaConnectAttempt();
+  splashStaStarted = true;
+  splashStaStartMs = millis();
+}
+
 void initWiFi() {
   // If we have stored credentials, try STA mode
   if (strlen(wifiSSID) > 0) {
-    WiFi.mode(WIFI_STA);
-
-    // Apply static IP if configured
-    if (!netSettings.useDHCP && netSettings.staticIP[0] != '\0') {
-      IPAddress ip, gw, sn, dns;
-      if (ip.fromString(netSettings.staticIP) &&
-          gw.fromString(netSettings.gateway) &&
-          sn.fromString(netSettings.subnet)) {
-        if (netSettings.dns[0] != '\0') dns.fromString(netSettings.dns);
-        else dns = gw;
-        WiFi.config(ip, gw, sn, dns);
-        Serial.printf("Static IP: %s GW: %s\n", netSettings.staticIP, netSettings.gateway);
-      }
-    }
-
     setScreenState(SCREEN_CONNECTING_WIFI);
 
-    for (int attempt = 1; attempt <= 3; attempt++) {
-      Serial.printf("Connecting to WiFi: %s (attempt %d/3)\n", wifiSSID, attempt);
-      WiFi.begin(wifiSSID, wifiPass);
+    if (splashStaStarted && WiFi.status() == WL_CONNECTED) {
+      Serial.println("WiFi connected during splash");
+      completeWiFiStartup();
+      return;
+    }
 
+    for (int attempt = 1; attempt <= 3; attempt++) {
       unsigned long start = millis();
+
+      if (attempt == 1 && splashStaStarted) {
+        Serial.printf("Connecting to WiFi: %s (attempt 1/3, continued after splash)\n", wifiSSID);
+        start = splashStaStartMs;
+      } else {
+        Serial.printf("Connecting to WiFi: %s (attempt %d/3)\n", wifiSSID, attempt);
+        beginStaConnectAttempt();
+      }
+
       while (WiFi.status() != WL_CONNECTED &&
              millis() - start < WIFI_CONNECT_TIMEOUT) {
         delay(100);
@@ -97,32 +173,16 @@ void initWiFi() {
 
       Serial.println("WiFi attempt failed, retrying...");
       WiFi.disconnect(true);
+      splashStaStarted = false;
       delay(1000);
     }
 
     if (WiFi.status() == WL_CONNECTED) {
-      Serial.printf("WiFi connected! IP: %s\n",
-                    WiFi.localIP().toString().c_str());
-      stopAP();
-      apMode = false;
-      disconnectTime = 0;
-
-      // Sync time via NTP with automatic DST
-      configTzTime(netSettings.timezoneStr, "pool.ntp.org", "time.nist.gov");
-      Serial.printf("NTP configured: %s\n", netSettings.timezoneStr);
-
-      // Show IP screen for 3 seconds if enabled
-      if (netSettings.showIPAtStartup) {
-        setScreenState(SCREEN_WIFI_CONNECTED);
-        unsigned long ipStart = millis();
-        while (millis() - ipStart < 3000) {
-          updateDisplay();
-          delay(50);
-        }
-      }
+      completeWiFiStartup();
       return;
     }
 
+    splashStaStarted = false;
     Serial.println("WiFi connection failed, starting AP");
   }
 

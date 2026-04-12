@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 
+void startWiFiDuringSplash();
 void initWiFi();
 void handleWiFi();
 bool isWiFiConnected();

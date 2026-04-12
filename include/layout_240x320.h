@@ -1,9 +1,8 @@
-#ifndef LAYOUT_CYD_H
-#define LAYOUT_CYD_H
+#ifndef LAYOUT_240x320_H
+#define LAYOUT_240x320_H
 
-// Layout profile: ILI9341 240x320 portrait (ESP32-2432S028 "CYD")
-// MVP: same layout as 240x240 but bottom-anchored elements moved to 320px.
-// The extra ~80px between gauge rows and ETA is intentionally unused for now.
+// Layout profile: 240x320 portrait (CYD ILI9341, Waveshare ST7789, WisBlock RAK14014 ST7789)
+// Same gauge grid as 240x240 but bottom-anchored elements moved to 320px.
 
 // --- Screen dimensions ---
 #define LY_W    240
@@ -83,6 +82,11 @@
 #define LY_IDLE_GAUGE_Y     140
 #define LY_IDLE_G_OFFSET    55
 
+// --- Idle screen: AMS zone (portrait only, below gauges) ---
+#define LY_IDLE_AMS_Y       185
+#define LY_IDLE_AMS_H       56
+#define LY_IDLE_AMS_BAR_H   32
+
 // --- Idle screen (no printer) - same as default ---
 #define LY_IDLE_NP_TITLE_Y  40
 #define LY_IDLE_NP_WIFI_Y   80
@@ -91,13 +95,17 @@
 #define LY_IDLE_NP_OPEN_Y   165
 #define LY_IDLE_NP_IP_Y     200
 
-// --- Finished screen (portrait) ---
+// --- Finished screen (portrait, vertically centered) ---
 #define LY_FIN_GAUGE_R   32
 #define LY_FIN_GL        72
 #define LY_FIN_GR        168
-#define LY_FIN_GY        80
-#define LY_FIN_TEXT_Y    148
-#define LY_FIN_FILE_Y   178
+#define LY_FIN_GY        100
+#define LY_FIN_TEXT_Y    168
+#define LY_FIN_FILE_Y   198
+#define LY_FIN_KWH_Y    218
+#define LY_FIN_AMS_Y    238
+#define LY_FIN_AMS_H    45
+#define LY_FIN_AMS_BAR_H 26
 #define LY_FIN_BOT_Y    290
 #define LY_FIN_BOT_H    22
 #define LY_FIN_WIFI_Y   308
@@ -116,12 +124,19 @@
 #define LY_AP_IP_Y        210
 
 // --- Simple clock (centered in 320px height) ---
+#ifndef _VARIANT_RAK3112_
 #define LY_CLK_CLEAR_Y   70
 #define LY_CLK_CLEAR_H   200
 #define LY_CLK_TIME_Y    140
 #define LY_CLK_AMPM_Y    175
 #define LY_CLK_DATE_Y    205
-
+#else // RAK3312 + RAK14014
+#define LY_CLK_CLEAR_Y   50
+#define LY_CLK_CLEAR_H   140
+#define LY_CLK_TIME_Y    100
+#define LY_CLK_AMPM_Y    135
+#define LY_CLK_DATE_Y    155
+#endif
 // --- Pong/Breakout clock ---
 #define LY_ARK_BRICK_ROWS   5
 #define LY_ARK_COLS          10
@@ -140,4 +155,4 @@
 #define LY_ARK_DATE_CLR_X   40
 #define LY_ARK_DATE_CLR_W   160
 
-#endif // LAYOUT_CYD_H
+#endif // LAYOUT_240x320_H

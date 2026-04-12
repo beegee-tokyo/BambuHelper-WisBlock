@@ -5,7 +5,9 @@ Create BambuHelper release firmware files.
 Usage:
     python merge_bins.py                    # auto-reads version, builds esp32s3
     python merge_bins.py --board cyd        # build CYD firmware
-    python merge_bins.py --board c3          # build ESP32-C3 firmware
+    python merge_bins.py --board esp32c3    # build ESP32-C3 firmware
+    python merge_bins.py --board ws_lcd_200 # build Waveshare 2.0 firmware
+    python merge_bins.py --all              # build all 4 board variants
     python merge_bins.py --board rak3312    # build RAK3312 firmware
     python merge_bins.py v2.5               # override version
     python merge_bins.py --ota              # OTA binary only
@@ -16,6 +18,8 @@ Output:
     firmware/v2.5/BambuHelper-esp32s3-v2.5-ota.bin
     firmware/v2.5/BambuHelper-cyd-v2.5-Full.bin
     firmware/v2.5/BambuHelper-cyd-v2.5-ota.bin
+    firmware/v2.5/BambuHelper-ws_lcd_200-v2.5-Full.bin
+    firmware/v2.5/BambuHelper-ws_lcd_200-v2.5-ota.bin
     firmware/v2.5/BambuHelper-esp32c3-v2.5-Full.bin
     firmware/v2.5/BambuHelper-esp32c3-v2.5-ota.bin
 """
@@ -25,13 +29,14 @@ import os
 import re
 import sys
 
-# Board configurations
+# Canonical board configurations. board_id must match BOARD_VARIANT used by OTA.
 BOARDS = {
-    's3': {
+    'esp32s3': {
         'build_dir': '.pio/build/esp32s3',
         'bootloader_offset': 0x0,       # ESP32-S3 starts at 0x0
         'partitions_offset': 0x8000,
         'firmware_offset': 0x10000,
+        'build_env': 'esp32s3',
         'board_id': 'esp32s3',
     },
     'cyd': {
@@ -39,22 +44,44 @@ BOARDS = {
         'bootloader_offset': 0x1000,    # Standard ESP32 starts at 0x1000
         'partitions_offset': 0x8000,
         'firmware_offset': 0x10000,
+        'build_env': 'cyd',
         'board_id': 'cyd',
     },
-    'c3': {
+    'ws_lcd_200': {
+        'build_dir': '.pio/build/ws_lcd_200',
+        'bootloader_offset': 0x0,       # ESP32-S3 starts at 0x0
+        'partitions_offset': 0x8000,
+        'firmware_offset': 0x10000,
+        'build_env': 'ws_lcd_200',
+        'board_id': 'ws_lcd_200',
+    },
+    'esp32c3': {
         'build_dir': '.pio/build/esp32c3',
         'bootloader_offset': 0x0,       # ESP32-C3 starts at 0x0
         'partitions_offset': 0x8000,
         'firmware_offset': 0x10000,
-        'board_id': 'c3',
+        'build_env': 'esp32c3',
+        'board_id': 'esp32c3',
     },
     'rak3312': {
         'build_dir': '.pio/build/rak3312',
         'bootloader_offset': 0x0,       # ESP32-S3 starts at 0x0
         'partitions_offset': 0x8000,
         'firmware_offset': 0x10000,
+        'build_env': 'rak3312',
         'board_id': 'rak3312',
     },
+}
+
+BOARD_ALIASES = {
+    's3': 'esp32s3',
+    'esp32s3': 'esp32s3',
+    'cyd': 'cyd',
+    'ws': 'ws_lcd_200',
+    'ws_lcd_200': 'ws_lcd_200',
+    'c3': 'esp32c3',
+    'esp32c3': 'esp32c3',
+    'rak3312': 'rak3312'
 }
 
 CONFIG_H = os.path.join('include', 'config.h')
@@ -82,12 +109,43 @@ def get_paths(version, board):
     return out_dir, full, ota
 
 
+def resolve_board(board):
+    """Map CLI alias to canonical board id used by BOARD_VARIANT and release assets."""
+    return BOARD_ALIASES[board]
+
+
+def build_outputs(version, board, ota_only=False, full_only=False):
+    """Build requested output files for one board."""
+    out_dir, merged_path, ota_path = get_paths(version, board)
+    print(f"Version: {version}  Board: {board}\n")
+
+    if ota_only:
+        return create_ota_binary(out_dir, ota_path, board)
+    if full_only:
+        return merge_binaries(out_dir, merged_path, board)
+
+    s1 = merge_binaries(out_dir, merged_path, board)
+    s2 = create_ota_binary(out_dir, ota_path, board)
+    success = s1 and s2
+
+    if success:
+        board_id = BOARDS[board]['board_id']
+        print(f"\n{'='*60}")
+        print(f"Release {version} ({board_id}) ready in {out_dir}/")
+        print(f"{'='*60}")
+        print(f"\nGitHub Release - attach both files:")
+        print(f"  BambuHelper-{board_id}-{version}-Full.bin  - new users (ESP Web Flasher)")
+        print(f"  BambuHelper-{board_id}-{version}-ota.bin   - existing users (Web UI update)")
+
+    return success
+
+
 def create_ota_binary(out_dir, out_path, board):
     """Copy firmware.bin as OTA update file."""
     cfg = BOARDS[board]
     firmware = os.path.join(cfg['build_dir'], 'firmware.bin')
     if not os.path.exists(firmware):
-        print(f"Error: {firmware} not found. Run 'pio run -e {board}' first.")
+        print(f"Error: {firmware} not found. Run 'pio run -e {cfg['build_env']}' first.")
         return False
 
     os.makedirs(out_dir, exist_ok=True)
@@ -131,7 +189,7 @@ def merge_binaries(out_dir, out_path, board):
 
     for path in [bootloader, partitions, firmware]:
         if not os.path.exists(path):
-            print(f"Error: {path} not found. Run 'pio run -e {board}' first.")
+            print(f"Error: {path} not found. Run 'pio run -e {cfg['build_env']}' first.")
             return False
 
     os.makedirs(out_dir, exist_ok=True)
@@ -182,7 +240,9 @@ def merge_binaries(out_dir, out_path, board):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Create BambuHelper release firmware')
     parser.add_argument('version', nargs='?', default=None, help='Version (default: read from config.h)')
-    parser.add_argument('--board', choices=list(BOARDS.keys()), default='s3', help='Board target (default: s3)')
+    parser.add_argument('--board', choices=list(BOARD_ALIASES.keys()), default='esp32s3',
+                        help='Board target (aliases supported: s3, c3, ws)')
+    parser.add_argument('--all', action='store_true', help='Generate binaries for all supported boards')
     parser.add_argument('--ota', action='store_true', help='OTA binary only')
     parser.add_argument('--full', action='store_true', help='Full (WebFlasher) binary only')
     args = parser.parse_args()
@@ -192,26 +252,14 @@ if __name__ == '__main__':
         print("Error: could not read FW_VERSION from config.h. Pass version as argument.")
         sys.exit(1)
 
-    board = args.board
-    out_dir, merged_path, ota_path = get_paths(version, board)
-    print(f"Version: {version}  Board: {board}\n")
-
-    if args.ota:
-        success = create_ota_binary(out_dir, ota_path, board)
-    elif args.full:
-        success = merge_binaries(out_dir, merged_path, board)
+    if args.all:
+        success = True
+        for idx, board in enumerate(BOARDS.keys()):
+            if idx > 0:
+                print(f"\n{'-'*60}\n")
+            success = build_outputs(version, board, ota_only=args.ota, full_only=args.full) and success
     else:
-        s1 = merge_binaries(out_dir, merged_path, board)
-        s2 = create_ota_binary(out_dir, ota_path, board)
-        success = s1 and s2
-
-        if success:
-            board_id = BOARDS[board]['board_id']
-            print(f"\n{'='*60}")
-            print(f"Release {version} ({board_id}) ready in {out_dir}/")
-            print(f"{'='*60}")
-            print(f"\nGitHub Release - attach both files:")
-            print(f"  BambuHelper-{board_id}-{version}-Full.bin  - new users (ESP Web Flasher)")
-            print(f"  BambuHelper-{board_id}-{version}-ota.bin   - existing users (Web UI update)")
+        board = resolve_board(args.board)
+        success = build_outputs(version, board, ota_only=args.ota, full_only=args.full)
 
     sys.exit(0 if success else 1)
