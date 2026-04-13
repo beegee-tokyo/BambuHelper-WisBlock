@@ -1,10 +1,17 @@
 # BambuHelper
 
-Dedicated Bambu Lab printer monitor built with ESP32-S3 Super Mini and a 1.54" 240x240 color TFT display (ST7789).
+----
+
+_**This fork is for WisBlock RAK3312 ESP32-S3 with RAK14014 240x320 px TFT touch screen display.**_     
+_**It is updated frequentely with updates made on the original code provided by @keralots**_     
+
+----
+
+Dedicated Bambu Lab printer monitor built with RAK3312 ESP32-S3 and the RAK14014 2.4" 240x320 color TFT display (ST7789) with FT6336U Touch Screen.
 
 Connects to your printer via MQTT over TLS and displays a real-time dashboard with arc gauges, animations, live stats, and optional buzzer notifications.
 
-Additional supported boards include CYD 240x320, Waveshare 2" 240x320, and ESP32-C3 DIY builds using the same 240x240 display as the ESP32-S3 version.
+For additional supported boards, please check [@Keralots BambuHelper repo](https://github.com/Keralots/BambuHelper).
 
 ### Supported Printers
 
@@ -31,16 +38,15 @@ When using Bambu Cloud, BambuHelper connects through Bambu Lab's cloud MQTT serv
 
 | Dashboard | Web Interface - Settings | Web Interface - Gauge Colors |
 |---|---|---|
-| ![Dashboard](img/interface1.jpg) | ![Settings](img/screen1.png) | ![Gauge Colors](img/screen2.png) |
+| <img src="img/RAK3312-RAK14014.png" width="900"> | ![Settings](img/screen1.png) | ![Gauge Colors](img/screen2.png) |
 
-## Other Supported Boards
+## Supported Boards
 
 | Preview | Board | Notes |
 |--------------------------------------|-------|-------|
 | <img src="img/RAK3312-RAK14014.png" width="900"> | **WisBlock RAK3312 ESP32-S3 + RAK14014 Touch LCD** | `240x320` ST7789 version with ESP32-S3, built with WisBlock Modular System. No soldering required, all components are just plugged together. Use the `rak3312` firmware build. Supports **up to 2 printers**, like the main ESP32-S3 DIY version. See [WisBlock Modular System components](#wisblock-modular-system-components) for used modules. Matching enclosure on [MakerWorld](https://makerworld.com/en/models/2571194-wisblock-bambuhelper-landscape) and [Instructables](https://www.printables.com/model/1649739-wisblock-bambuhelper-landscape) |
-| ![CYD display](img/CYD.png) | **CYD / ESP32-2432S028** | `240x320` ILI9341 all-in-one board. Use the `cyd` firmware build. Due to RAM limits, this board supports **1 printer only**. When flashing from [ESP Web Flasher](https://espressif.github.io/esptool-js/), set **Baudrate: 115200** before clicking **Connect**. If the first attempt fails, click **Disconnect** and then **Connect** again without unplugging the USB cable. If colors look reversed (white background instead of dark), enable **Invert display colors (fix white background)** in the web UI under **Display**. |
-| ![Waveshare 2 inch](img/waveshare2inch.png) | **Waveshare ESP32-S3-Touch-LCD-2** | `240x320` ST7789 version with ESP32-S3, sold as a more plug-and-play option. Use the `ws_lcd_200` firmware build. Supports **up to 2 printers**, like the main ESP32-S3 DIY version. Product page: [waveshare.com/esp32-s3-touch-lcd-2.htm](https://www.waveshare.com/esp32-s3-touch-lcd-2.htm) |
-| ![ESP32-C3 board](img/ESP32c3Board.png) | **ESP32-C3 Super Mini** | DIY version, just like the main ESP32-S3 build, using the same `240x240` ST7789 display. Use the `esp32c3` firmware build. Due to RAM limits, this board supports **1 printer only**. |
+
+Check [@Keralots BambuHelper repo](https://github.com/Keralots/BambuHelper) for other supported MCU/Display options
 
 ## Features
 
@@ -65,79 +71,25 @@ When using Bambu Cloud, BambuHelper connects through Bambu Lab's cloud MQTT serv
 
 ## Hardware
 
-| Component | Specification |
-|---|---|
-| MCU | ESP32-S3 Super Mini |
-| Display | 1.54" TFT SPI ST7789 (240x240) |
-| Other supported boards | CYD / ESP32-2432S028 (240x320 ILI9341), Waveshare ESP32-S3-Touch-LCD-2 (240x320 ST7789), ESP32-C3 Super Mini + 240x240 ST7789 |
-| Connection | SPI |
-
-Display: 1.54": https://a.aliexpress.com/_EG9y7wc
-
-ESP32-S3 SuperMini: https://a.aliexpress.com/_Eyk9GdA  (Make sure you purchase S3 variant!)
-
-Optional: TTP223 touch button or standard push button for multi-printer switching (auto printer switching works without a button anyway; change settings in the web interface): TTP223 link: https://aliexpress.com/item/1005006246380749.html
-
-Optional: Passive buzzer for print finish and error notifications: https://aliexpress.com/item/1005008825917787.html
-
-Optional case seen on picture (for ST7789 (240x240) display): https://makerworld.com/en/models/2501721
-
-> **Note:** CYD, Waveshare 2 and WisBlock RAK3312" are all-in-one boards or modular concepts with the display already integrated. The wiring tables below mainly apply to the DIY ESP32-S3 and ESP32-C3 builds that use an external 240x240 ST7789 display.
-
 ### Default Wiring
 
-| Display Pin ST7789 (240x240) | ESP32-S3 GPIO | ESP32-C3 GPIO |
-|---|---|---|
-| MOSI (SDA) | 11 | 20 |
-| SCLK (SCL) | 12 | 21 |
-| CS | 10 | 6 |
-| DC | 9 | 7 |
-| RST | 8 | 10 |
-| BL | 13 | 5 |
-| GND | GND | GND |
-| VCC | 3.3V | 3.3V |
-
-Adjust pin assignments in `platformio.ini` `build_flags` to match your wiring.
-
-Touch TTP223 button is optional. It is used to switch between printers. You may also use a standard push button and connect it between pin 4 and GND, then pick the correct button type in the web interface under Multi-Printer support.
+> **Note:** WisBlock RAK3312" is a modular concepts with the display already integrated. No additional wiring or soldering is required.     
 
 ### Optional Touch Sensor / Button Wiring
-
-A button or touch sensor is optional. It cycles between printers and wakes the display from sleep. Configure the type and GPIO in the web interface under **Multi-Printer**.
-
-**TTP223 capacitive touch sensor:**
-
-| TTP223 Pin | ESP32-S3 GPIO | ESP32-C3 GPIO |
-|---|---|---|
-| `VCC` | `3.3V` | `3.3V` |
-| `GND` | `GND` | `GND` |
-| `SIG` | `GPIO 4` | `GPIO 4` |
-
-**Standard push button:** connect one leg to `GPIO 4` and the other to `GND`. The internal pull-up is enabled automatically. Select **Push Button** in the web interface.
 
 > **Note:** For WisBlock RAK3312 with RAK14014 TFT display select **TouchScreen** in the web interface.
 
 ### Optional Buzzer Wiring
 
-The buzzer is completely optional. If you do not connect one, BambuHelper works normally.
-
-Use a **passive buzzer** and connect it like this:
-
-| Buzzer Pin | ESP32-S3 GPIO | ESP32-C3 GPIO |
-|---|---|---|
-| `+` / `SIG` | `GPIO 5` | `GPIO 3` |
-| `-` / `GND` | `GND` | `GND` |
-
-> **Note:** The firmware default buzzer pin is `GPIO 5` on both ESP32-S3 and ESP32-C3. The table above shows the **recommended wiring**. If you wire an ESP32-C3 buzzer to `GPIO 3`, you must change the buzzer pin to `GPIO 3` in the web interface after the first boot.
-You can change the buzzer GPIO later in the web interface under **Buzzer**. The buzzer can be used for print-finished, connected, and error notifications.
-
-![wiring](img/wiring.png)
+Optional a [WisBlock RAK18001 Buzzer](https://store.rakwireless.com/products/wisblock-buzzer-module-rak18001) can be added in Sensor Slot A of the WisBlock Base Board.     
 
 > **Note:** For WisBlock RAK3312 with RAK14014 TFT display and the RAK18001 buzzer, the GPIO pin is `GPIO 21`.
 
-### Assembly Video
+> **WARNING:** Due to the high current peak of the buzzer, it requires to use a battery connected to the WisBlock Base Board. Otherwise the ESP32-S3 might trigger a power failure and reboots.
 
-[![Assembly Video](https://img.youtube.com/vi/hsyamsU5UZE/maxresdefault.jpg)](https://youtu.be/hsyamsU5UZE)
+### Assembly Instructions
+
+[Assembly Guide](./img/WisBlock BambuHelper assembly guide for landscape enclosure version.pdf)
 
 ### WisBlock Modular System components
 
@@ -163,11 +115,8 @@ You can change the buzzer GPIO later in the web interface under **Buzzer**. The 
 
 | Board | Use this `Full` file for first flash / recovery |
 |---|---|
-| ESP32-S3 Super Mini | `BambuHelper-esp32s3-v2.7-Full.bin` |
-| CYD / ESP32-2432S028 | `BambuHelper-cyd-v2.7-Full.bin` |
-| Waveshare ESP32-S3-Touch-LCD-2 | `BambuHelper-ws_lcd_200-v2.7-Full.bin` |
-| ESP32-C3 Super Mini | `BambuHelper-esp32c3-v2.7-Full.bin` |
-| WisBlock RAK3312 | `BambuHelper-rak3312-v2.7-Full.bin` |
+| WisBlock RAK3312 | `BambuHelper-rak3312-vx.y-Full.bin` |
+| Other ESP32 Boards | Check [@Keralots BambuHelper repo](https://github.com/Keralots/BambuHelper) |
 
 ## Setup
 
@@ -358,14 +307,8 @@ BambuHelper supports monitoring up to 2 printers simultaneously via dual MQTT co
 
 ### Physical Button
 
-An optional physical button can be connected to cycle between printers and wake the display from sleep.
-
-| Type | Wiring | How it works |
-|---|---|---|
-| **Push button** | One pin to configured GPIO, other pin to GND | Active LOW with internal pull-up |
-| **TTP223 touch sensor** | VCC->3.3V, GND->GND, SIG->configured GPIO | Active HIGH |
-
-The button type and GPIO pin are configurable in the web interface (Multi-Printer section) - no recompilation needed.
+The version with RAK3312 and RAK14014 TFT display does not require a physical button, as it has a touch screen.      
+Select **Touchscreen** in the WebUI in _Hardware & Multi-Printer_ section.
 
 ### MQTT Reconnect Backoff
 
@@ -389,10 +332,6 @@ When the printer comes back online, the backoff resets to normal immediately.
 
 ### WiFi won't connect / drops frequently
 
-**SPI display cables near the ESP32 antenna can cause WiFi interference.** The ESP32-S3 Super Mini has a PCB antenna at one end of the board. If the SPI wires to the display run close to or over this antenna area, RF interference can prevent WiFi from connecting or cause frequent disconnections.
-
-**Fix:** Route the display cables away from the antenna end of the ESP32-S3. Even 1-2 cm of separation can make a significant difference. If using a breadboard, ensure the wires do not loop back over the ESP32 module.
-
 **Antenna is not connected to MHF-4 connector of the RAK3312**    
 Make sure the WiFi antenna that is coming with the RAK3312 is connected to the correct antenna connector on the RAK3312.e ESP32 module.
 
@@ -400,11 +339,6 @@ Make sure the WiFi antenna that is coming with the RAK3312 is connected to the c
 - "Connecting to WiFi" screen appears briefly, then falls back to AP mode
 - WiFi connects sometimes but drops after a few seconds
 - Works fine when display is disconnected
-
-**If WiFi issues persist**
-Perform an antenna mod by soldering two individual goldpins to the antenna pads, as shown in the picture.
-
-![wiring](img/antenamod.png)
 
 ### Printer shows "Connecting" but never connects
 
@@ -419,9 +353,7 @@ Perform an antenna mod by soldering two individual goldpins to the antenna pads,
 
 ## Future Plans
 
-- Planned display support: Waveshare [ESP32-S3-LCD-1.54](https://www.waveshare.com/esp32-s3-lcd-1.54.htm) (240x240, ST7789)
-- Automatic printer power-off via Tasmota after cooldown and idle timeout
-- Expanded AMS/filament visualization
+- Keep updated with new features added by @keralots
 
 ## License
 
