@@ -1038,9 +1038,11 @@ static void handleConn(MqttConn& c) {
         setPrinterGcodeStateCanonical(s, GCODE_UNKNOWN);
         c.stalePushallSentMs = 0;
       }
-    } else {
-      c.stalePushallSentMs = 0;
     }
+    // Don't reset stalePushallSentMs here - one recovery pushall per
+    // FINISH is enough.  Resetting would create an infinite loop every
+    // finishHoldMs minutes, risking cloud error 49.
+    // stalePushallSentMs resets naturally when state leaves FINISH.
 
   // --- Idle cloud: connection freshness ---
   } else if (isConnected && cloud && s.gcodeStateId == GCODE_IDLE) {
