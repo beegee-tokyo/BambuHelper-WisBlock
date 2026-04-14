@@ -7,7 +7,8 @@ Usage:
     python merge_bins.py --board cyd        # build CYD firmware
     python merge_bins.py --board esp32c3    # build ESP32-C3 firmware
     python merge_bins.py --board ws_lcd_200 # build Waveshare 2.0 firmware
-    python merge_bins.py --all              # build all 4 board variants
+    python merge_bins.py --board ws_lcd_154 # build Waveshare 1.54 firmware
+    python merge_bins.py --all              # build all 5 board variants
     python merge_bins.py v2.5               # override version
     python merge_bins.py --ota              # OTA binary only
     python merge_bins.py --full             # Full (WebFlasher) binary only
@@ -19,6 +20,8 @@ Output:
     firmware/v2.5/BambuHelper-cyd-v2.5-ota.bin
     firmware/v2.5/BambuHelper-ws_lcd_200-v2.5-Full.bin
     firmware/v2.5/BambuHelper-ws_lcd_200-v2.5-ota.bin
+    firmware/v2.5/BambuHelper-ws_lcd_154-v2.5-Full.bin
+    firmware/v2.5/BambuHelper-ws_lcd_154-v2.5-ota.bin
     firmware/v2.5/BambuHelper-esp32c3-v2.5-Full.bin
     firmware/v2.5/BambuHelper-esp32c3-v2.5-ota.bin
 """
@@ -54,6 +57,14 @@ BOARDS = {
         'build_env': 'ws_lcd_200',
         'board_id': 'ws_lcd_200',
     },
+    'ws_lcd_154': {
+        'build_dir': '.pio/build/ws_lcd_154',
+        'bootloader_offset': 0x0,       # ESP32-S3 starts at 0x0
+        'partitions_offset': 0x8000,
+        'firmware_offset': 0x10000,
+        'build_env': 'ws_lcd_154',
+        'board_id': 'ws_lcd_154',
+    },
     'esp32c3': {
         'build_dir': '.pio/build/esp32c3',
         'bootloader_offset': 0x0,       # ESP32-C3 starts at 0x0
@@ -70,6 +81,8 @@ BOARD_ALIASES = {
     'cyd': 'cyd',
     'ws': 'ws_lcd_200',
     'ws_lcd_200': 'ws_lcd_200',
+    'ws154': 'ws_lcd_154',
+    'ws_lcd_154': 'ws_lcd_154',
     'c3': 'esp32c3',
     'esp32c3': 'esp32c3',
 }

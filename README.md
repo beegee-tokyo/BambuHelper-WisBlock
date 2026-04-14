@@ -4,7 +4,7 @@ Dedicated Bambu Lab printer monitor built with ESP32-S3 Super Mini and a 1.54" 2
 
 Connects to your printer via MQTT over TLS and displays a real-time dashboard with arc gauges, animations, live stats, and optional buzzer notifications.
 
-Additional supported boards include CYD 240x320, Waveshare 2" 240x320, and ESP32-C3 DIY builds using the same 240x240 display as the ESP32-S3 version.
+Additional supported boards include CYD 240x320, Waveshare 2" 240x320, Waveshare 1.54" 240x240, and ESP32-C3 DIY builds using the same 240x240 display as the ESP32-S3 version.
 
 ### Supported Printers
 
@@ -39,6 +39,7 @@ When using Bambu Cloud, BambuHelper connects through Bambu Lab's cloud MQTT serv
 |---|---|---|
 | ![CYD display](img/CYD.png) | **CYD / ESP32-2432S028** | `240x320` ILI9341 all-in-one board. Use the `cyd` firmware build. Due to RAM limits, this board supports **1 printer only**. When flashing from [ESP Web Flasher](https://espressif.github.io/esptool-js/), set **Baudrate: 115200** before clicking **Connect**. If the first attempt fails, click **Disconnect** and then **Connect** again without unplugging the USB cable. If colors look reversed (white background instead of dark), enable **Invert display colors (fix white background)** in the web UI under **Display**. |
 | ![Waveshare 2 inch](img/waveshare2inch.png) | **Waveshare ESP32-S3-Touch-LCD-2** | `240x320` ST7789 version with ESP32-S3, sold as a more plug-and-play option. Use the `ws_lcd_200` firmware build. Supports **up to 2 printers**, like the main ESP32-S3 DIY version. Product page: [waveshare.com/esp32-s3-touch-lcd-2.htm](https://www.waveshare.com/esp32-s3-touch-lcd-2.htm) |
+| ![Waveshare 1.54 inch](img/waveshare1.54inch.png) | **Waveshare ESP32-S3-Touch-LCD-1.54** | `240x240` ST7789 with ESP32-S3, touchscreen, battery holder, and 3 built-in buttons. Use the `ws_lcd_154` firmware build. Supports **up to 2 printers**. The left button (BOOT) works as a screen switcher alongside the touchscreen. **Battery power:** press and hold the center PWR button to power on. To power off, hold the left (BOOT) and right buttons simultaneously for 1.5 seconds. Product page: [waveshare.com/esp32-s3-touch-lcd-1.54.htm](https://www.waveshare.com/esp32-s3-touch-lcd-1.54.htm) |
 | ![ESP32-C3 board](img/ESP32c3Board.png) | **ESP32-C3 Super Mini** | DIY version, just like the main ESP32-S3 build, using the same `240x240` ST7789 display. Use the `esp32c3` firmware build. Due to RAM limits, this board supports **1 printer only**. |
 
 ## Features
@@ -68,7 +69,7 @@ When using Bambu Cloud, BambuHelper connects through Bambu Lab's cloud MQTT serv
 |---|---|
 | MCU | ESP32-S3 Super Mini |
 | Display | 1.54" TFT SPI ST7789 (240x240) |
-| Other supported boards | CYD / ESP32-2432S028 (240x320 ILI9341), Waveshare ESP32-S3-Touch-LCD-2 (240x320 ST7789), ESP32-C3 Super Mini + 240x240 ST7789 |
+| Other supported boards | CYD / ESP32-2432S028 (240x320 ILI9341), Waveshare ESP32-S3-Touch-LCD-2 (240x320 ST7789), Waveshare ESP32-S3-Touch-LCD-1.54 (240x240 ST7789), ESP32-C3 Super Mini + 240x240 ST7789 |
 | Connection | SPI |
 
 Display: 1.54": https://a.aliexpress.com/_EG9y7wc
@@ -154,6 +155,7 @@ You can change the buzzer GPIO later in the web interface under **Buzzer**. The 
 | ESP32-S3 Super Mini | `BambuHelper-esp32s3-v2.7-Full.bin` |
 | CYD / ESP32-2432S028 | `BambuHelper-cyd-v2.7-Full.bin` |
 | Waveshare ESP32-S3-Touch-LCD-2 | `BambuHelper-ws_lcd_200-v2.7-Full.bin` |
+| Waveshare ESP32-S3-Touch-LCD-1.54 | `BambuHelper-ws_lcd_154-v2.7-Full.bin` |
 | ESP32-C3 Super Mini | `BambuHelper-esp32c3-v2.7-Full.bin` |
 
 ## Setup
@@ -403,7 +405,6 @@ Perform an antenna mod by soldering two individual goldpins to the antenna pads,
 
 ## Future Plans
 
-- Planned display support: Waveshare [ESP32-S3-LCD-1.54](https://www.waveshare.com/esp32-s3-lcd-1.54.htm) (240x240, ST7789)
 - Automatic printer power-off via Tasmota after cooldown and idle timeout
 - Expanded AMS/filament visualization
 
