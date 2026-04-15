@@ -658,6 +658,28 @@ static void parseMqttPayload(byte* payload, unsigned int length, BambuState& s) 
     s.chamberTemp = atof(print["device"]["ctc"]["info"]["temp"].as<const char*>());
   }
 
+  // H2D/H2C fallback: parse ctc.info.temp from raw payload via memmem
+  // (ArduinoJson filter may strip device.ctc due to deep nesting in the
+  //  large device object — same class of issue as extruder, see line ~284)
+  if (s.chamberTemp == 0) {
+    const char* ctcPos = (const char*)memmem(payload, length, "\"ctc\":", 6);
+    if (ctcPos) {
+      size_t remain = (size_t)(payloadEnd - ctcPos);
+      size_t searchLen = (remain > 128) ? 128 : remain;
+      const char* tempPos = (const char*)memmem(ctcPos, searchLen, "\"temp\":", 7);
+      if (tempPos) {
+        const char* valStart = tempPos + 7;
+        while (valStart < payloadEnd && *valStart == ' ') valStart++;
+        float ctcTemp = atof(valStart);
+        if (ctcTemp > 0 && ctcTemp < 100) {
+          s.chamberTemp = ctcTemp;
+          corePrintData = true;
+          MQTT_LOG("chamber temp from memmem ctc: %.1f", ctcTemp);
+        }
+      }
+    }
+  }
+
   if (print["subtask_name"].is<const char*>()) {
     corePrintData = true;
     const char* name = print["subtask_name"];
