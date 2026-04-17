@@ -527,9 +527,14 @@ R"rawliteral(
           <option value="1" %BUZ_ON%>Enabled</option>
         </select>
         <div id="buzFields" style="display:none">
+          <div id="buzPinRow">
           <label for="buzpin">Buzzer GPIO Pin</label>
           <input type="number" id="buzpin" min="1" max="48" value="%BUZ_PIN%">
           <p style="font-size:11px;color:#8B949E;margin-top:4px">Passive buzzer. Beeps on print complete and errors.</p>
+          </div>
+          <div id="buzEs8311Info" style="display:none">
+            <p style="font-size:11px;color:#8B949E;margin-top:4px">Built-in ES8311 I2S audio codec. No GPIO configuration needed.</p>
+          </div>
           <label style="margin-top:8px">Quiet Hours (optional)</label>
           <div style="display:flex;gap:8px;align-items:center">
             <input type="number" id="buzqs" min="0" max="23" value="%BUZ_QS%" style="width:60px" placeholder="22">
@@ -1002,6 +1007,9 @@ toggleBtnPin();
 function toggleBuzPin(){
   var buzOn=document.getElementById('buzzen').value!=='0';
   document.getElementById('buzFields').style.display=buzOn?'block':'none';
+  var isES8311='%ES8311_AUDIO%'==='1';
+  document.getElementById('buzPinRow').style.display=(buzOn&&!isES8311)?'block':'none';
+  document.getElementById('buzEs8311Info').style.display=(buzOn&&isES8311)?'block':'none';
   var btnOn=document.getElementById('btntype').value!=='0';
   document.getElementById('buzClickRow').style.display=(buzOn&&btnOn)?'block':'none';
 }
@@ -1153,6 +1161,12 @@ function toggleDebug(on){
 function refreshDiag(){
   fetch('/debug').then(r=>r.json()).then(d=>{
     var h='';
+    function ageText(sec, hasAny){
+      if(!hasAny) return 'Never';
+      if(sec < 60) return sec+'s ago';
+      if(sec < 3600) return Math.round(sec/60)+' min ago';
+      return Math.round(sec/3600)+' h ago';
+    }
     if(d.printers){
       d.printers.forEach(function(p){
         h+='<div style="margin-bottom:8px;padding:6px;border-left:2px solid '+(p.connected?'#3FB950':'#F85149')+'">';
@@ -1160,12 +1174,17 @@ function refreshDiag(){
         h+='<div class="stat-row"><span>MQTT:</span><span class="stat-val">'+(p.connected?'<span style="color:#3FB950">Connected</span>':'<span style="color:#F85149">Disconnected</span>')+'</span></div>';
         h+='<div class="stat-row"><span>Attempts:</span><span class="stat-val">'+p.attempts+'</span></div>';
         h+='<div class="stat-row"><span>Messages RX:</span><span class="stat-val">'+p.messages+'</span></div>';
+        h+='<div class="stat-row"><span>Pushall total:</span><span class="stat-val">'+(p.pushall_total||0)+'</span></div>';
+        var rc=p.rec_print||0, rd=p.rec_conn_dead||0, rf=p.rec_finish||0, ri=p.rec_idle||0;
+        h+='<div class="stat-row"><span>Pushall recovery:</span><span class="stat-val">'+(rc+rd+rf+ri)+' (P:'+rc+' D:'+rd+' F:'+rf+' I:'+ri+')</span></div>';
+        h+='<div class="stat-row"><span>Last pushall:</span><span class="stat-val">'+esc(p.last_pushall_reason||'Never')+' ('+ageText(p.last_pushall_age_s,p.pushall_total>0)+')</span></div>';
         if(p.last_rc!==0) h+='<div class="stat-row"><span>Last error:</span><span class="stat-val" style="color:#F85149">'+esc(p.rc_text)+'</span></div>';
         h+='</div>';
       });
     }
     h+='<div class="stat-row"><span>Free heap:</span><span class="stat-val">'+Math.round(d.heap/1024)+'KB</span></div>';
     h+='<div class="stat-row"><span>Uptime:</span><span class="stat-val">'+Math.round(d.uptime/60)+'min</span></div>';
+    h+='<div style="margin-top:8px;font-size:0.8em;color:#8B949E">Recovery: P=Print stale, D=Conn dead, F=Finish stale, I=Idle/Unknown</div>';
     document.getElementById('diagInfo').innerHTML=h;
   }).catch(function(e){console.warn('refreshDiag:',e);});
 }
@@ -1648,6 +1667,14 @@ static bool resolvePlaceholder(const char* name, String& out) {
   if (strcmp(name, "BUZ_OFF") == 0) { out = buzzerSettings.enabled ? "" : "selected"; return true; }
   if (strcmp(name, "BUZ_ON") == 0)  { out = buzzerSettings.enabled ? "selected" : ""; return true; }
   if (strcmp(name, "BUZ_PIN") == 0) { out = String(buzzerSettings.pin); return true; }
+  if (strcmp(name, "ES8311_AUDIO") == 0) {
+#if defined(BOARD_HAS_ES8311_AUDIO)
+    out = "1";
+#else
+    out = "0";
+#endif
+    return true;
+  }
   if (strcmp(name, "BUZ_QS") == 0)  { out = String(buzzerSettings.quietStartHour); return true; }
   if (strcmp(name, "BUZ_QE") == 0)  { out = String(buzzerSettings.quietEndHour); return true; }
   if (strcmp(name, "BUZ_CLICK") == 0) { out = buzzerSettings.buttonClick ? "checked" : ""; return true; }
@@ -2099,6 +2126,7 @@ static void handleReset() {
 
 static void handleDebug() {
   JsonDocument doc;
+  unsigned long now = millis();
 
   JsonArray arr = doc["printers"].to<JsonArray>();
   for (uint8_t i = 0; i < MAX_ACTIVE_PRINTERS; i++) {
@@ -2114,6 +2142,13 @@ static void handleDebug() {
     p["last_rc"] = d.lastRc;
     p["rc_text"] = mqttRcToString(d.lastRc);
     p["tcp_ok"] = d.tcpOk;
+    p["pushall_total"] = d.pushallTotal;
+    p["rec_print"] = d.recoveryPrint;
+    p["rec_conn_dead"] = d.recoveryConnDead;
+    p["rec_finish"] = d.recoveryFinish;
+    p["rec_idle"] = d.recoveryIdle;
+    p["last_pushall_reason"] = pushallReasonToString(d.lastPushallReason);
+    p["last_pushall_age_s"] = d.lastPushallMs > 0 ? (now - d.lastPushallMs) / 1000UL : 0;
   }
 
   doc["heap"] = ESP.getFreeHeap();

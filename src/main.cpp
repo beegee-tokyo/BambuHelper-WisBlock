@@ -9,6 +9,8 @@
 #include "button.h"
 #include "buzzer.h"
 #include "tasmota.h"
+#include <esp_sleep.h>
+#include <driver/gpio.h>
 
 static unsigned long splashEnd = 0;
 static unsigned long finishScreenStart = 0;
@@ -18,6 +20,14 @@ static bool idleClockActive = false;       // guards idleClockStart against mill
 static unsigned long connectingScreenStart = 0;  // for stuck-state timeout
 static PrinterGcodeState prevGcodeStateId[MAX_ACTIVE_PRINTERS] = { GCODE_UNKNOWN };
 static bool prevGcodeStateSeen[MAX_ACTIVE_PRINTERS] = { false };
+#if defined(BAT_EN) && defined(BOARD_BTN_1) && defined(BOARD_BTN_3)
+static unsigned long boardShutdownHoldStart = 0;
+#endif
+#if defined(BOARD_BTN_1)
+static bool lastBoardBtn = false;
+static bool boardBtnStable = false;
+static unsigned long boardBtnChangeMs = 0;
+#endif
 
 static bool anyPrinterPrinting() {
   for (uint8_t i = 0; i < MAX_ACTIVE_PRINTERS; i++) {
@@ -90,8 +100,25 @@ static void cycleDisplayedPrinterFromButton() {
   }
 }
 
+static bool wasBoardButtonPressed() {
+#if defined(BOARD_BTN_1)
+  bool raw = (digitalRead(BOARD_BTN_1) == LOW);
+  if (raw != lastBoardBtn) {
+    boardBtnChangeMs = millis();
+    lastBoardBtn = raw;
+  }
+  if ((millis() - boardBtnChangeMs) < 50) return false;
+  bool result = false;
+  if (raw && !boardBtnStable) result = true;
+  boardBtnStable = raw;
+  return result;
+#else
+  return false;
+#endif
+}
+
 static void handleWakeButton() {
-  if (!wasButtonPressed()) return;
+  if (!wasButtonPressed() && !wasBoardButtonPressed()) return;
 
   // Handle physical button press before MQTT so screen wakes instantly
   // without waiting for a potentially blocking TLS reconnect.
@@ -120,6 +147,36 @@ static void handleWakeButton() {
     // Single printer, cloud, UNKNOWN - manual refresh
     requestCloudRefresh(rotState.displayIndex);
   }
+}
+
+static void handleBoardPowerOff() {
+#if defined(BAT_EN) && defined(BOARD_BTN_1) && defined(BOARD_BTN_3)
+  bool leftPressed = (digitalRead(BOARD_BTN_1) == LOW);
+  bool rightPressed = (digitalRead(BOARD_BTN_3) == LOW);
+
+  if (!leftPressed || !rightPressed) {
+    boardShutdownHoldStart = 0;
+    return;
+  }
+
+  if (boardShutdownHoldStart == 0) {
+    boardShutdownHoldStart = millis();
+    return;
+  }
+
+  if (millis() - boardShutdownHoldStart < 1500) return;
+
+  Serial.println("Power off requested by built-in buttons");
+  setBacklight(0);
+  delay(50);
+
+  // Drive BAT_EN low and hold it through deep sleep
+  digitalWrite(BAT_EN, LOW);
+  gpio_hold_en((gpio_num_t)BAT_EN);
+  esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
+  delay(200);
+  esp_deep_sleep_start();
+#endif
 }
 
 static void handleDisplayedPrinterFinishState(ScreenState current, BambuState& s) {
@@ -376,6 +433,22 @@ void setup() {
   pinMode(WB_IO2, OUTPUT);
   digitalWrite(WB_IO2, HIGH);
 #endif
+#if defined(BAT_EN)
+  // Waveshare ESP32-S3-Touch-LCD-1.54 needs BAT_EN high to keep running
+  // after releasing the center PWR button when booting from battery.
+  gpio_hold_dis((gpio_num_t)BAT_EN);  // release hold from previous deep sleep
+  pinMode(BAT_EN, OUTPUT);
+  digitalWrite(BAT_EN, HIGH);
+#endif
+#if defined(BOARD_BTN_1)
+  pinMode(BOARD_BTN_1, INPUT_PULLUP);
+#endif
+#if defined(BOARD_BTN_2)
+  pinMode(BOARD_BTN_2, INPUT_PULLUP);
+#endif
+#if defined(BOARD_BTN_3)
+  pinMode(BOARD_BTN_3, INPUT_PULLUP);
+#endif
   Serial.begin(115200);
   Serial.printf("\n=== BambuHelper %s Starting ===\n", FW_VERSION);
 
@@ -391,9 +464,10 @@ void loop() {
 
   handleWiFi();
   handleWebServer();
+  handleBoardPowerOff();
+  handleWakeButton();
 
   if (isWiFiConnected() && !isAPMode()) {
-    handleWakeButton();
     updateDisplayedPrinterScreenState();
   }
 

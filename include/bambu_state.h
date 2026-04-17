@@ -79,7 +79,8 @@ struct BambuState {
   uint8_t activeNozzle;       // 0=right, 1=left (only when dualNozzle)
   bool doorOpen;              // door/enclosure open (H2 series: parsed from stat field)
   bool doorSensorPresent;     // true if stat field with door bit has been received
-  unsigned long lastUpdate;   // millis() of last MQTT message
+  unsigned long lastUpdate;       // millis() of last MQTT message (any)
+  unsigned long lastPrintDataMs;  // millis() of last core print data (temps, fans, progress, state)
   bool finishBuzzerPlayed;    // true after FINISH buzzer played (reset on next print)
   bool doorAcknowledged;      // true after door opened on FINISH screen (print removed)
   AmsState ams;               // AMS tray data

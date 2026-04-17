@@ -1,7 +1,7 @@
 #ifndef LAYOUT_240x320_H
 #define LAYOUT_240x320_H
 
-// Layout profile: 240x320 portrait (CYD ILI9341, Waveshare ST7789, WisBlock RAK14014 ST7789)
+// Layout profile: 240x320 portrait (CYD ILI9341, Waveshare ST7789)
 // Same gauge grid as 240x240 but bottom-anchored elements moved to 320px.
 
 // --- Screen dimensions ---

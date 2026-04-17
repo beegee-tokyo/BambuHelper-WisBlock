@@ -84,8 +84,10 @@ uint16_t bambuColorToRgb565(const char* rrggbbaa) {
     }
   }
 
-  // Boost global brightness of the color so it's not too dark on the TFT
-  if (max_val > 0 && max_val < 220) {
+  // Boost global brightness so pastel colors pop, but preserve intentionally
+  // dark filaments (black, dark grey). Below this threshold we leave the
+  // color alone - inflating r=g=b=10 to ~220 turned black filaments near-white.
+  if (max_val >= 32 && max_val < 220) {
     float b_scale = 220.0f / max_val;
     r = (uint8_t)(r * b_scale);
     g = (uint8_t)(g * b_scale);
@@ -327,7 +329,7 @@ void loadSettings() {
   rotState.lastRotateMs = 0;
 
   // Button settings
-#ifdef DISPLAY_240x320
+#if defined(USE_CST816) || defined(USE_XPT2046) || DISPLAY_240x320
   buttonType = (ButtonType)prefs.getUChar("btn_type", BTN_TOUCHSCREEN);
 #else
   buttonType = (ButtonType)prefs.getUChar("btn_type", BTN_DISABLED);

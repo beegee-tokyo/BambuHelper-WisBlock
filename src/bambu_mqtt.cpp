@@ -25,12 +25,13 @@ struct MqttConn {
   uint32_t pushallSeqId;
   unsigned long connectTime;
   bool initialPushallSent;
-  unsigned long idleSince;
+  bool gotDataSinceConnect;  // true after first message on current connection
   bool active;           // connection slot in use
   uint16_t consecutiveFails;  // for exponential backoff
   unsigned long disconnectSince;  // grace period before showing "connecting" screen
   bool wasConnected;              // track connected->disconnected transitions for logging
   unsigned long stalePushallSentMs;  // when recovery pushall was sent on stale detection
+  unsigned long lastRecoveryResolvedMs;  // when last recovery resolved (cooldown timer)
 };
 
 static MqttConn conns[MAX_ACTIVE_PRINTERS];
@@ -63,6 +64,21 @@ const MqttDiag& getMqttDiag(uint8_t slot) {
   if (slot >= MAX_ACTIVE_PRINTERS) slot = 0;
   conns[slot].diag.freeHeap = ESP.getFreeHeap();
   return conns[slot].diag;
+}
+
+const char* pushallReasonToString(uint8_t reason) {
+  switch ((PushallReason)reason) {
+    case PUSHALL_INITIAL:            return "Initial";
+    case PUSHALL_RETRY_NO_DATA:      return "Retry (No Data)";
+    case PUSHALL_PERIODIC:           return "Periodic";
+    case PUSHALL_RECOVERY_PRINT:     return "Recovery (Print)";
+    case PUSHALL_RECOVERY_CONN_DEAD: return "Recovery (Conn Dead)";
+    case PUSHALL_RECOVERY_FINISH:    return "Recovery (Finish)";
+    case PUSHALL_RECOVERY_IDLE:      return "Recovery (Idle)";
+    case PUSHALL_MANUAL:             return "Manual";
+    case PUSHALL_NONE:
+    default:                         return "Never";
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -124,9 +140,14 @@ static bool ensureClients(MqttConn& c) {
     MQTT_LOG("[%d] setServer(%s, %d) [LOCAL]", c.slotIndex, cfg.ip, BAMBU_PORT);
     c.mqtt->setServer(cfg.ip, BAMBU_PORT);
   }
-  c.mqtt->setBufferSize(BAMBU_BUFFER_SIZE);
+  if (!c.mqtt->setBufferSize(BAMBU_BUFFER_SIZE)) {
+    MQTT_LOG("[%d] setBufferSize(%d) FAILED — not enough heap!", c.slotIndex, BAMBU_BUFFER_SIZE);
+    delete c.mqtt; c.mqtt = nullptr;
+    delete c.tls;  c.tls  = nullptr;
+    return false;
+  }
   c.mqtt->setCallback(mqttCallback);
-  c.mqtt->setKeepAlive(isCloudMode(cfg.mode) ? 5 : BAMBU_KEEPALIVE);
+  c.mqtt->setKeepAlive(isCloudMode(cfg.mode) ? BAMBU_CLOUD_KEEPALIVE : BAMBU_KEEPALIVE);
 
   return true;
 }
@@ -134,8 +155,8 @@ static bool ensureClients(MqttConn& c) {
 // ---------------------------------------------------------------------------
 //  Request pushall for one connection
 // ---------------------------------------------------------------------------
-static void requestPushall(MqttConn& c) {
-  if (!c.mqtt) return;
+static bool requestPushall(MqttConn& c, PushallReason reason) {
+  if (!c.mqtt) return false;
 
   PrinterConfig& cfg = printers[c.slotIndex].config;
   char topic[64];
@@ -147,9 +168,23 @@ static void requestPushall(MqttConn& c) {
            "\"version\":1,\"push_target\":1}}",
            c.pushallSeqId++);
 
-  MQTT_LOG("[%d] pushall -> %s", c.slotIndex, topic);
-  c.mqtt->publish(topic, payload);
+  MQTT_LOG("[%d] pushall (%s) -> %s", c.slotIndex, pushallReasonToString(reason), topic);
+  if (!c.mqtt->publish(topic, payload)) {
+    MQTT_LOG("[%d] pushall publish FAILED", c.slotIndex);
+    return false;
+  }
   c.lastPushallRequest = millis();
+  c.diag.pushallTotal++;
+  switch (reason) {
+    case PUSHALL_RECOVERY_PRINT:     c.diag.recoveryPrint++;    break;
+    case PUSHALL_RECOVERY_CONN_DEAD: c.diag.recoveryConnDead++; break;
+    case PUSHALL_RECOVERY_FINISH:    c.diag.recoveryFinish++;   break;
+    case PUSHALL_RECOVERY_IDLE:      c.diag.recoveryIdle++;     break;
+    default: break;
+  }
+  c.diag.lastPushallMs = c.lastPushallRequest;
+  c.diag.lastPushallReason = (uint8_t)reason;
+  return true;
 }
 
 static void clearLiveMetrics(BambuState& s) {
@@ -165,6 +200,10 @@ static void clearLiveMetrics(BambuState& s) {
   s.wifiSignal = 0;
   s.doorOpen = false;  s.doorSensorPresent = false;
   s.subtaskName[0] = '\0';
+  // Clear AMS drying state so stale drying doesn't block screen sleep
+  s.ams.anyDrying = false;
+  for (uint8_t i = 0; i < AMS_MAX_UNITS; i++)
+    s.ams.units[i].dryRemainMin = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -200,8 +239,7 @@ static uint8_t normalizeTrayIndex(const AmsState& ams,
 // ---------------------------------------------------------------------------
 //  Parse MQTT payload into a BambuState (extracted for routing)
 // ---------------------------------------------------------------------------
-static void parseMqttPayload(byte* payload, unsigned int length,
-                             BambuState& s, MqttDiag& diag, unsigned long& idleSince) {
+static void parseMqttPayload(byte* payload, unsigned int length, BambuState& s) {
   const char* payloadEnd = (const char*)payload + length;
 
   // Filter document to reduce parse memory
@@ -215,6 +253,8 @@ static void parseMqttPayload(byte* payload, unsigned int length,
   pf["bed_temper"] = true;
   pf["bed_target_temper"] = true;
   pf["chamber_temper"] = true;
+  pf["ctc"]["info"]["temp"] = true;           // legacy/alternate chamber temp path
+  pf["device"]["ctc"]["info"]["temp"] = true; // H2C/H2D chamber temp path
   pf["subtask_name"] = true;
   pf["layer_num"] = true;
   pf["total_layer_num"] = true;
@@ -284,6 +324,7 @@ static void parseMqttPayload(byte* payload, unsigned int length,
               s.nozzleTemp   = (float)(packed & 0xFFFF);
               s.nozzleTarget = (float)(packed >> 16);
               s.lastUpdate = millis();
+              s.lastPrintDataMs = millis();
               MQTT_LOG("dual nozzle=%d temp=%.0f target=%.0f", s.activeNozzle, s.nozzleTemp, s.nozzleTarget);
             }
           }
@@ -337,39 +378,35 @@ static void parseMqttPayload(byte* payload, unsigned int length,
           uint8_t rawTrayNow = 255;
           if (hasExplicitTrayNow) rawTrayNow = atoi(amsDoc["tray_now"].as<const char*>());
 
-          if (hasTraySnapshot) {
+          // --- Pass 1: unit-level data (always, even partial updates) ---
+          // Clear unit-level visibility for ALL units before rebuilding.
+          // Prevents ghost units staying .present with stale data when a
+          // previously-visible unit disappears from a partial update.
+          // Preserves trayCount (cached until next tray snapshot) and drying totals.
           s.ams.unitCount = 0;
-
-            // Reset tray data so vanished trays don't linger, but only when
-            // the payload carries an actual tray snapshot. Partial cloud
-            // updates often omit tray arrays and should keep the cached view.
-            memset(s.ams.trays, 0, sizeof(s.ams.trays));
-            for (auto& t : s.ams.trays) t.remain = -1;
-
-            // Reset unit runtime fields, preserve drying state
-            for (auto& u : s.ams.units) {
+          s.ams.anyDrying = false;
+          for (uint8_t i = 0; i < AMS_MAX_UNITS; i++) {
+            AmsUnit& u = s.ams.units[i];
+            uint8_t savedTrayCount = u.trayCount;
               uint16_t savedDryTotal = u.dryTotalMin;
               uint16_t savedDryRemain = u.dryRemainMin;
-              memset(&u, 0, sizeof(u));
+            u.present = false;
+            u.id = 0;
+            u.humidity = 0;
+            u.humidityRaw = 0;
+            u.temp = 0;
+            u.trayCount = savedTrayCount;
               u.dryTotalMin = savedDryTotal;
               u.dryRemainMin = savedDryRemain;
             }
 
-          s.ams.anyDrying = false;
-
-            // Reset external spool - re-populated if vt_tray present in this message
-            s.ams.vtPresent = false;
-            s.ams.vtType[0] = '\0';
-            s.ams.vtColorRgb565 = 0;
-
-          uint8_t unitIdx = 0;  // sequential index for unit-level storage
+          uint8_t unitIdx = 0;
           for (JsonObject unit : units) {
             if (!unit["id"].is<const char*>()) continue;
             uint8_t uid = atoi(unit["id"].as<const char*>());
             if (unitIdx >= AMS_MAX_UNITS) continue;
             s.ams.unitCount++;
 
-            // Unit-level data (drying, humidity, temperature)
             AmsUnit& u = s.ams.units[unitIdx];
             u.present = true;
             u.id = uid;
@@ -387,8 +424,24 @@ static void parseMqttPayload(byte* payload, unsigned int length,
             if (unit["temp"].is<const char*>())
               u.temp = atof(unit["temp"].as<const char*>());
             if (u.dryRemainMin > 0) s.ams.anyDrying = true;
+            unitIdx++;
+          }
+          if (unitIdx > 0) s.lastUpdate = millis();  // AMS data = connection alive
 
-              // Tray data - use sequential index, not raw uid
+          // --- Pass 2: tray-level data (only full snapshots) ---
+          if (hasTraySnapshot) {
+            memset(s.ams.trays, 0, sizeof(s.ams.trays));
+            for (auto& t : s.ams.trays) t.remain = -1;
+
+            // Reset external spool - re-populated if vt_tray present in this message
+            s.ams.vtPresent = false;
+            s.ams.vtType[0] = '\0';
+            s.ams.vtColorRgb565 = 0;
+
+            unitIdx = 0;
+            for (JsonObject unit : units) {
+              if (!unit["id"].is<const char*>()) continue;
+              if (unitIdx >= AMS_MAX_UNITS) continue;
               uint8_t seqIdx = unitIdx;
             unitIdx++;
 
@@ -423,10 +476,10 @@ static void parseMqttPayload(byte* payload, unsigned int length,
               }
                 parsedTrays++;
             }
-              u.trayCount = parsedTrays;
+              s.ams.units[seqIdx].trayCount = parsedTrays;
           }
           } else if (!units.isNull()) {
-            MQTT_LOG("AMS partial update without tray snapshot - keeping cached trays");
+            MQTT_LOG("AMS partial update - unit data refreshed, keeping cached trays");
           }
 
           // --- activeTray normalization (after units are populated) ---
@@ -507,7 +560,7 @@ static void parseMqttPayload(byte* payload, unsigned int length,
 
   JsonObject print = doc["print"];
   if (print.isNull()) {
-    s.lastUpdate = millis();  // any message keeps the stale timer alive
+    s.lastUpdate = millis();  // message arrived, but no print data
     return;
   }
 
@@ -519,66 +572,123 @@ static void parseMqttPayload(byte* payload, unsigned int length,
                   print["bed_temper"] | -1.0f);
   }
 
-  // Delta merge: only update fields present in this message
+  // Delta merge: only update fields present in this message.
+  // Track whether core print-dashboard fields arrived (for stale recovery).
+  bool corePrintData = false;
 
   if (print["gcode_state"].is<const char*>()) {
+    corePrintData = true;
     const char* state = print["gcode_state"];
     setPrinterGcodeStateRaw(s, state);
-    bool wasActive = s.printing;
     s.printing = isPrintingGcodeState(s.gcodeStateId);
-    if (s.printing) {
-      idleSince = 0;
-    } else if (wasActive || idleSince == 0) {
-      idleSince = millis();
+  }
+
+  if (print["mc_percent"].is<int>()) {
+    corePrintData = true;
+    s.progress = print["mc_percent"].as<int>();
+  }
+
+  if (print["mc_remaining_time"].is<int>()) {
+    corePrintData = true;
+    s.remainingMinutes = print["mc_remaining_time"].as<int>();
+  }
+
+  // For dual-nozzle (H2D/H2C): nozzle_temper is the INACTIVE nozzle - skip it
+  // Active nozzle temp comes from extruder.info[] parsed above
+  if (!s.dualNozzle) {
+    if (print["nozzle_temper"].is<float>()) {
+      corePrintData = true;
+      s.nozzleTemp = print["nozzle_temper"].as<float>();
+    } else if (print["nozzle_temper"].is<int>()) {
+      corePrintData = true;
+      s.nozzleTemp = print["nozzle_temper"].as<int>();
+    }
+
+    if (print["nozzle_target_temper"].is<float>()) {
+      corePrintData = true;
+      s.nozzleTarget = print["nozzle_target_temper"].as<float>();
+    } else if (print["nozzle_target_temper"].is<int>()) {
+      corePrintData = true;
+      s.nozzleTarget = print["nozzle_target_temper"].as<int>();
+  }
+  }
+
+  if (print["bed_temper"].is<float>()) {
+    corePrintData = true;
+    s.bedTemp = print["bed_temper"].as<float>();
+  } else if (print["bed_temper"].is<int>()) {
+    corePrintData = true;
+    s.bedTemp = print["bed_temper"].as<int>();
+  }
+
+  if (print["bed_target_temper"].is<float>()) {
+    corePrintData = true;
+    s.bedTarget = print["bed_target_temper"].as<float>();
+  } else if (print["bed_target_temper"].is<int>()) {
+    corePrintData = true;
+    s.bedTarget = print["bed_target_temper"].as<int>();
+  }
+
+  if (print["chamber_temper"].is<float>()) {
+    corePrintData = true;
+    s.chamberTemp = print["chamber_temper"].as<float>();
+  } else if (print["chamber_temper"].is<int>()) {
+    corePrintData = true;
+    s.chamberTemp = print["chamber_temper"].as<int>();
+  } else if (print["ctc"]["info"]["temp"].is<int>()) {
+    // ctc.info.temp may be packed: (target << 16) | current — extract current
+    corePrintData = true;
+    s.chamberTemp = (float)(print["ctc"]["info"]["temp"].as<int>() & 0xFFFF);
+  } else if (print["ctc"]["info"]["temp"].is<const char*>()) {
+    corePrintData = true;
+    s.chamberTemp = (float)((int)atof(print["ctc"]["info"]["temp"].as<const char*>()) & 0xFFFF);
+  } else if (print["device"]["ctc"]["info"]["temp"].is<int>()) {
+    // H2C/H2D: device.ctc.info.temp — packed: (target << 16) | current
+    corePrintData = true;
+    s.chamberTemp = (float)(print["device"]["ctc"]["info"]["temp"].as<int>() & 0xFFFF);
+  } else if (print["device"]["ctc"]["info"]["temp"].is<const char*>()) {
+    corePrintData = true;
+    s.chamberTemp = (float)((int)atof(print["device"]["ctc"]["info"]["temp"].as<const char*>()) & 0xFFFF);
+  }
+
+  // H2D/H2C fallback: parse ctc.info.temp from raw payload via memmem
+  // (ArduinoJson filter may strip device.ctc due to deep nesting in the
+  //  large device object — same class of issue as extruder, see line ~284)
+  if (s.chamberTemp == 0) {
+    const char* ctcPos = (const char*)memmem(payload, length, "\"ctc\":", 6);
+    if (ctcPos) {
+      size_t remain = (size_t)(payloadEnd - ctcPos);
+      size_t searchLen = (remain > 128) ? 128 : remain;
+      const char* tempPos = (const char*)memmem(ctcPos, searchLen, "\"temp\":", 7);
+      if (tempPos) {
+        const char* valStart = tempPos + 7;
+        while (valStart < payloadEnd && *valStart == ' ') valStart++;
+        int rawVal = atoi(valStart);
+        float ctcTemp = (float)(rawVal & 0xFFFF);
+        if (ctcTemp > 0 && ctcTemp < 200) {
+          s.chamberTemp = ctcTemp;
+          corePrintData = true;
+          MQTT_LOG("chamber temp from memmem ctc: %.1f", ctcTemp);
+        }
+      }
     }
   }
 
-  if (print["mc_percent"].is<int>())
-    s.progress = print["mc_percent"].as<int>();
-
-  if (print["mc_remaining_time"].is<int>())
-    s.remainingMinutes = print["mc_remaining_time"].as<int>();
-
-  // For dual-nozzle (H2D/H2C): nozzle_temper is the INACTIVE nozzle — skip it
-  // Active nozzle temp comes from extruder.info[] parsed below
-  if (!s.dualNozzle) {
-    if (print["nozzle_temper"].is<float>())
-      s.nozzleTemp = print["nozzle_temper"].as<float>();
-    else if (print["nozzle_temper"].is<int>())
-      s.nozzleTemp = print["nozzle_temper"].as<int>();
-
-    if (print["nozzle_target_temper"].is<float>())
-      s.nozzleTarget = print["nozzle_target_temper"].as<float>();
-    else if (print["nozzle_target_temper"].is<int>())
-      s.nozzleTarget = print["nozzle_target_temper"].as<int>();
-  }
-
-  if (print["bed_temper"].is<float>())
-    s.bedTemp = print["bed_temper"].as<float>();
-  else if (print["bed_temper"].is<int>())
-    s.bedTemp = print["bed_temper"].as<int>();
-
-  if (print["bed_target_temper"].is<float>())
-    s.bedTarget = print["bed_target_temper"].as<float>();
-  else if (print["bed_target_temper"].is<int>())
-    s.bedTarget = print["bed_target_temper"].as<int>();
-
-  if (print["chamber_temper"].is<float>())
-    s.chamberTemp = print["chamber_temper"].as<float>();
-  else if (print["chamber_temper"].is<int>())
-    s.chamberTemp = print["chamber_temper"].as<int>();
-
   if (print["subtask_name"].is<const char*>()) {
+    corePrintData = true;
     const char* name = print["subtask_name"];
-    strncpy(s.subtaskName, name, sizeof(s.subtaskName) - 1);
-    s.subtaskName[sizeof(s.subtaskName) - 1] = '\0';
+    strlcpy(s.subtaskName, name, sizeof(s.subtaskName));
   }
 
-  if (print["layer_num"].is<int>())
+  if (print["layer_num"].is<int>()) {
+    corePrintData = true;
     s.layerNum = print["layer_num"].as<int>();
+  }
 
-  if (print["total_layer_num"].is<int>())
+  if (print["total_layer_num"].is<int>()) {
+    corePrintData = true;
     s.totalLayers = print["total_layer_num"].as<int>();
+  }
 
   // Fan speeds (Bambu sends 0-15, may arrive as int or string)
   auto parseFan = [](JsonVariant v) -> int {
@@ -589,17 +699,18 @@ static void parseMqttPayload(byte* payload, unsigned int length,
 
   int fanVal;
   fanVal = parseFan(print["cooling_fan_speed"]);
-  if (fanVal >= 0) s.coolingFanPct = (fanVal * 100) / 15;
+  if (fanVal >= 0) { corePrintData = true; s.coolingFanPct = (fanVal * 100) / 15; }
 
   fanVal = parseFan(print["big_fan1_speed"]);
-  if (fanVal >= 0) s.auxFanPct = (fanVal * 100) / 15;
+  if (fanVal >= 0) { corePrintData = true; s.auxFanPct = (fanVal * 100) / 15; }
 
   fanVal = parseFan(print["big_fan2_speed"]);
-  if (fanVal >= 0) s.chamberFanPct = (fanVal * 100) / 15;
+  if (fanVal >= 0) { corePrintData = true; s.chamberFanPct = (fanVal * 100) / 15; }
 
   fanVal = parseFan(print["heatbreak_fan_speed"]);
-  if (fanVal >= 0) s.heatbreakFanPct = (fanVal * 100) / 15;
+  if (fanVal >= 0) { corePrintData = true; s.heatbreakFanPct = (fanVal * 100) / 15; }
 
+  // Non-core fields: wifi_signal, spd_lvl, stat - don't count as core print data
   if (print["wifi_signal"].is<const char*>())
     s.wifiSignal = atoi(print["wifi_signal"].as<const char*>());
   else if (print["wifi_signal"].is<int>())
@@ -623,6 +734,7 @@ static void parseMqttPayload(byte* payload, unsigned int length,
   }
 
   s.lastUpdate = millis();
+  if (corePrintData) s.lastPrintDataMs = millis();
 }
 
 // ---------------------------------------------------------------------------
@@ -646,8 +758,9 @@ static void mqttCallback(char* topic, byte* payload, unsigned int length) {
   c->diag.messagesRx++;
   MQTT_LOG("[%d] callback #%u topic=%s len=%u", c->slotIndex, c->diag.messagesRx, topic, length);
 
+  c->gotDataSinceConnect = true;
   BambuState& s = printers[c->slotIndex].state;
-  parseMqttPayload(payload, length, s, c->diag, c->idleSince);
+  parseMqttPayload(payload, length, s);
 }
 
 // ---------------------------------------------------------------------------
@@ -706,6 +819,8 @@ static void reconnectConn(MqttConn& c) {
   if (!ensureClients(c)) {
     MQTT_LOG("[%d] ensureClients() FAILED", c.slotIndex);
     c.diag.lastRc = -2;
+    c.consecutiveFails++;
+    c.lastReconnectAttempt = millis();  // respect backoff on OOM
     return;
   }
   if (c.mqtt->connected()) return;
@@ -763,7 +878,13 @@ static void reconnectConn(MqttConn& c) {
   if (connected) {
     char topic[64];
     snprintf(topic, sizeof(topic), "device/%s/report", cfg.serial);
-    c.mqtt->subscribe(topic);
+    if (!c.mqtt->subscribe(topic)) {
+      MQTT_LOG("[%d] subscribe FAILED for %s — disconnecting", c.slotIndex, topic);
+      c.mqtt->disconnect();
+      c.consecutiveFails++;
+      c.diag.lastRc = -2;
+      return;
+    }
 
     printers[c.slotIndex].state.connected = true;
     // Detect "quick disconnect" pattern: if last connection lasted < 30s,
@@ -772,6 +893,7 @@ static void reconnectConn(MqttConn& c) {
                            (millis() - c.connectTime < 30000);
     c.connectTime = millis();
     c.initialPushallSent = false;
+    c.gotDataSinceConnect = false;
     if (!quickDisconnect) {
       c.consecutiveFails = 0;  // only reset backoff on stable connections
     } else {
@@ -828,6 +950,7 @@ static void handleConn(MqttConn& c) {
 
   if (isConnected) {
     c.mqtt->loop();
+    isConnected = c.mqtt->connected();  // re-evaluate: loop() can disconnect
   }
 
   if (!isConnected) {
@@ -850,7 +973,7 @@ static void handleConn(MqttConn& c) {
     if (!c.initialPushallSent && c.connectTime > 0 &&
         millis() - c.connectTime > BAMBU_PUSHALL_INITIAL_DELAY) {
       esp_task_wdt_reset();
-      requestPushall(c);
+      if (requestPushall(c, PUSHALL_INITIAL))
       c.initialPushallSent = true;
     }
 
@@ -858,80 +981,142 @@ static void handleConn(MqttConn& c) {
     // Cloud pushes data automatically; repeated publish to request topic
     // may trigger access_denied (TLS alert 49) on the cloud broker.
     if (!isCloudMode(cfg.mode)) {
-      if (c.initialPushallSent && c.diag.messagesRx == 0 &&
+      if (c.initialPushallSent && !c.gotDataSinceConnect &&
           millis() - c.lastPushallRequest > 10000) {
         MQTT_LOG("[%d] No data after pushall, retrying...", c.slotIndex);
         esp_task_wdt_reset();
-        requestPushall(c);
+        requestPushall(c, PUSHALL_RETRY_NO_DATA);
       }
 
-      if (c.initialPushallSent && c.diag.messagesRx > 0 &&
+      if (c.initialPushallSent && c.gotDataSinceConnect &&
           millis() - c.lastPushallRequest > BAMBU_PUSHALL_INTERVAL) {
         esp_task_wdt_reset();
-        requestPushall(c);
+        requestPushall(c, PUSHALL_PERIODIC);
       }
     }
   }
 
-  unsigned long staleMs = isCloudMode(cfg.mode) ? BAMBU_STALE_TIMEOUT * 5 : BAMBU_STALE_TIMEOUT;
-  if (s.lastUpdate > 0 && millis() - s.lastUpdate > staleMs) {
+  // Stale detection uses two freshness signals:
+  // - lastPrintDataMs: core dashboard fields (temps, fans, progress, state)
+  // - lastUpdate: any MQTT message at all (connection alive)
+  //
+  // Key rule: if lastUpdate is fresh (messages flowing) but lastPrintDataMs
+  // is stale, the printer is ALIVE but not sending core data. In that case
+  // send a rate-limited recovery pushall but NEVER clear to IDLE/UNKNOWN -
+  // showing "Ready" during an active print is worse than showing stale data.
+  //
+  // Clear to IDLE only when the connection itself is dead (lastUpdate stale).
+
+  bool cloud = isCloudMode(cfg.mode);
+  unsigned long connStaleMs = cloud ? BAMBU_STALE_TIMEOUT * 5 : BAMBU_STALE_TIMEOUT;
+  bool connAlive = s.lastUpdate > 0 && (millis() - s.lastUpdate <= connStaleMs);
+
+  // Cloud recovery pushall rate limit: at most one per 2 minutes.
+  bool cloudPushallThrottled = cloud &&
+      c.lastPushallRequest > 0 && millis() - c.lastPushallRequest < 120000;
+
+  // Cloud recovery cooldown: after a recovery resolves, don't re-enter for 5 min.
+  // Prevents chatty recovery cycles when cloud has frequent >120s gaps in core data.
+  bool recoveryCooldown = cloud &&
+      c.lastRecoveryResolvedMs > 0 && millis() - c.lastRecoveryResolvedMs < 300000;
+
+  // --- Active print: core data freshness ---
     if (s.printing) {
-      if (isConnected && c.stalePushallSentMs == 0) {
-        // Cloud went quiet during printing - request a refresh before clearing state.
-        // Prevents a false "Ready" screen when the broker stops pushing updates mid-print.
-        MQTT_LOG("[%d] stale during print - sending recovery pushall", c.slotIndex);
+    unsigned long printStaleMs = cloud ? BAMBU_PRINT_STALE_TIMEOUT : BAMBU_STALE_TIMEOUT;
+    bool coreStale = s.lastPrintDataMs > 0 && millis() - s.lastPrintDataMs > printStaleMs;
+
+    if (coreStale && connAlive) {
+      // Messages flowing but no core print data - send recovery pushall (rate-limited).
+      // Keep showing printing screen with stale values.
+      if (isConnected && c.stalePushallSentMs == 0 && !cloudPushallThrottled && !recoveryCooldown) {
+        MQTT_LOG("[%d] core print data stale - sending recovery pushall", c.slotIndex);
         esp_task_wdt_reset();
-        requestPushall(c);
+        if (requestPushall(c, PUSHALL_RECOVERY_PRINT))
+          c.stalePushallSentMs = millis();
+      }
+      // Don't give up - connection is alive, keep printing screen
+    } else if (coreStale && !connAlive) {
+      // Connection truly dead - no messages at all for connStaleMs.
+      if (isConnected && c.stalePushallSentMs == 0) {
+        MQTT_LOG("[%d] connection dead during print - sending recovery pushall", c.slotIndex);
+        esp_task_wdt_reset();
+        if (requestPushall(c, PUSHALL_RECOVERY_CONN_DEAD))
         c.stalePushallSentMs = millis();
       } else if (c.stalePushallSentMs == 0 ||
                  millis() - c.stalePushallSentMs > 30000) {
-        // Not connected, or recovery pushall sent 30s ago with no response - give up
+        // Recovery pushall sent 30s ago with no response - give up
+        MQTT_LOG("[%d] no response to recovery pushall - clearing print state", c.slotIndex);
         s.printing = false;
-        // Also reset gcodeState - otherwise state machine shows SCREEN_IDLE
-        // with "RUNNING" text (2 gauges) instead of SCREEN_PRINTING (6 gauges)
         setPrinterGcodeStateCanonical(s, GCODE_IDLE);
         c.stalePushallSentMs = 0;
       }
+    } else {
+      if (c.stalePushallSentMs > 0) c.lastRecoveryResolvedMs = millis();
+      c.stalePushallSentMs = 0;  // core data is fresh
+    }
+
+  // --- FINISH: core data freshness ---
     } else if (s.gcodeStateId == GCODE_FINISH) {
-      // Keep FINISH visible for at least the configured timeout, but do not let
-      // a silent printer leave the dashboard stuck on frozen completion data.
-      unsigned long finishHoldMs = staleMs;
+    unsigned long printStaleMs = cloud ? BAMBU_PRINT_STALE_TIMEOUT : BAMBU_STALE_TIMEOUT;
+    unsigned long finishHoldMs = printStaleMs;
       if (dpSettings.finishDisplayMins > 0) {
         unsigned long configuredHoldMs = (unsigned long)dpSettings.finishDisplayMins * 60000UL;
         if (configuredHoldMs > finishHoldMs) finishHoldMs = configuredHoldMs;
       }
 
-      if (millis() - s.lastUpdate > finishHoldMs) {
-        if (isConnected && c.stalePushallSentMs == 0) {
+    if (s.lastPrintDataMs > 0 && millis() - s.lastPrintDataMs > finishHoldMs) {
+      if (connAlive && isConnected && c.stalePushallSentMs == 0 && !cloudPushallThrottled && !recoveryCooldown) {
           MQTT_LOG("[%d] stale finish - sending recovery pushall", c.slotIndex);
           esp_task_wdt_reset();
-          requestPushall(c);
+        if (requestPushall(c, PUSHALL_RECOVERY_FINISH))
           c.stalePushallSentMs = millis();
-        } else if (c.stalePushallSentMs == 0 ||
-                   millis() - c.stalePushallSentMs > 30000) {
-          MQTT_LOG("[%d] stale finish - clearing cached state", c.slotIndex);
+      } else if (!connAlive &&
+                 (c.stalePushallSentMs == 0 || millis() - c.stalePushallSentMs > 30000)) {
+        MQTT_LOG("[%d] stale finish, connection dead - clearing cached state", c.slotIndex);
           clearLiveMetrics(s);
           setPrinterGcodeStateCanonical(s, GCODE_UNKNOWN);
           c.stalePushallSentMs = 0;
         }
       }
-    } else if (isConnected && isCloudMode(cfg.mode) &&
-               s.gcodeStateId == GCODE_IDLE) {
+    // Don't reset stalePushallSentMs here - one recovery pushall per
+    // FINISH is enough.  Resetting would create an infinite loop every
+    // finishHoldMs minutes, risking cloud error 49.
+    // stalePushallSentMs resets naturally when state leaves FINISH.
+
+  // --- Idle cloud: connection freshness ---
+  } else if (isConnected && cloud && s.gcodeStateId == GCODE_IDLE) {
+    if (s.lastUpdate > 0 && millis() - s.lastUpdate > connStaleMs) {
       // Cloud broker connected but idle printer is unresponsive (powered off).
-      // IDLE can be cleared immediately; FINISH has its own grace window above
-      // and FAILED is intentionally left untouched.
       MQTT_LOG("[%d] stale idle on cloud - clearing cached state", c.slotIndex);
       clearLiveMetrics(s);
       setPrinterGcodeStateCanonical(s, GCODE_UNKNOWN);
-      // Single recovery pushall - if printer just came back online this
-      // gets fresh data immediately.  No periodic retries to avoid
-      // access_denied (TLS alert 49) on the cloud broker.
       esp_task_wdt_reset();
-      requestPushall(c);
+      if (requestPushall(c, PUSHALL_RECOVERY_IDLE))
       c.stalePushallSentMs = millis();
+    } else {
+      if (c.stalePushallSentMs > 0) c.lastRecoveryResolvedMs = millis();
+      c.stalePushallSentMs = 0;
     }
-  } else {
-    c.stalePushallSentMs = 0;  // fresh data arrived - reset recovery state
+
+  // --- UNKNOWN on cloud: printer just came online ---
+  // After initial pushall gets no response (printer off), state stays UNKNOWN.
+  // When the printer powers on and starts sending partial updates, connAlive
+  // becomes true but we have no full status.  Send a bootstrap pushall.
+  // First attempt is exempt from cloudPushallThrottled (it's at most the 2nd
+  // pushall ever - no error 49 risk).  Retries respect the 2-min throttle.
+  } else if (isConnected && cloud && s.gcodeStateId == GCODE_UNKNOWN && connAlive) {
+    bool firstAttempt = (c.stalePushallSentMs == 0);
+    if (firstAttempt || !cloudPushallThrottled) {
+      MQTT_LOG("[%d] UNKNOWN + data flowing - sending %s pushall",
+               c.slotIndex, firstAttempt ? "bootstrap" : "retry");
+      esp_task_wdt_reset();
+      if (requestPushall(c, PUSHALL_RECOVERY_IDLE))
+        c.stalePushallSentMs = millis();
+    }
+
+  // --- Any other state ---
+  } else if (s.gcodeStateId != GCODE_UNKNOWN) {
+    c.stalePushallSentMs = 0;
   }
 }
 
@@ -984,7 +1169,10 @@ void initBambuMqtt() {
       // userId extraction uses HTTPClient (TLS) — must complete before MQTT TLS
       char tokenBuf[1200];
       if (loadCloudToken(tokenBuf, sizeof(tokenBuf))) {
-        cloudExtractUserId(tokenBuf, cfg.cloudUserId, sizeof(cfg.cloudUserId));
+        if (!cloudExtractUserId(tokenBuf, cfg.cloudUserId, sizeof(cfg.cloudUserId))) {
+          Serial.printf("MQTT: [%d] JWT extract failed, trying API\n", i);
+          cloudFetchUserId(tokenBuf, cfg.cloudUserId, sizeof(cfg.cloudUserId), cfg.region);
+        }
         if (strlen(cfg.cloudUserId) > 0) {
           Serial.printf("MQTT: [%d] userId=%s\n", i, cfg.cloudUserId);
           savePrinterConfig(i);
@@ -1003,11 +1191,12 @@ void initBambuMqtt() {
     c.pushallSeqId = 0;
     c.connectTime = 0;
     c.initialPushallSent = false;
-    c.idleSince = 0;
+    c.gotDataSinceConnect = false;
     c.consecutiveFails = 0;
     c.disconnectSince = 0;
     c.wasConnected = false;
     c.stalePushallSentMs = 0;
+    c.lastRecoveryResolvedMs = 0;
 
     BambuState& s = printers[i].state;
     memset(&s, 0, sizeof(BambuState));
@@ -1066,7 +1255,7 @@ void requestCloudRefresh(uint8_t slot) {
   lastRefreshMs = millis();
   MQTT_LOG("[%d] manual cloud refresh (pushall)", c.slotIndex);
   esp_task_wdt_reset();
-  requestPushall(c);
+  requestPushall(c, PUSHALL_MANUAL);
 }
 
 void disconnectBambuMqtt() {

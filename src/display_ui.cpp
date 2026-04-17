@@ -117,8 +117,7 @@ void initDisplay() {
 #endif
   tft.setRotation(dispSettings.rotation);
 #if defined(DISPLAY_240x320)
-  if (dispSettings.invertColors)
-    tft.invertDisplay(false);
+  if (dispSettings.invertColors) tft.invertDisplay(false);
 #endif
   Serial.println("Display: setRotation done");
   tft.fillScreen(CLR_BG);
@@ -199,31 +198,21 @@ static const char *nozzleLabel(const BambuState &s) {
 // ---------------------------------------------------------------------------
 static const char *speedLevelName(uint8_t level) {
   switch (level  ) {
-  case 1:
-    return "Silent";
-  case 2:
-    return "Std";
-  case 3:
-    return "Sport";
-  case 4:
-    return "Ludicr";
-  default:
-    return "---";
+    case 1: return "Silent";
+    case 2: return "Std";
+    case 3: return "Sport";
+    case 4: return "Ludicr";
+    default: return "---";
   }
 }
 
 static uint16_t speedLevelColor(uint8_t level) {
   switch (level  ) {
-  case 1:
-    return CLR_BLUE;
-  case 2:
-    return CLR_GREEN;
-  case 3:
-    return CLR_ORANGE;
-  case 4:
-    return CLR_RED;
-  default:
-    return CLR_TEXT_DIM;
+    case 1: return CLR_BLUE;
+    case 2: return CLR_GREEN;
+    case 3: return CLR_ORANGE;
+    case 4: return CLR_RED;
+    default: return CLR_TEXT_DIM;
   }
 }
 
@@ -430,8 +419,7 @@ static void drawWifiSignalIndicator(const BambuState &s, int16_t wifiY);
 //  Screen: Idle (connected, not printing)
 // ---------------------------------------------------------------------------
 static void drawIdleNoPrinter() {
-  if (!forceRedraw)
-    return;
+  if (!forceRedraw) return;
 
   tft.setTextDatum(MC_DATUM);
 
@@ -466,12 +454,9 @@ static unsigned long dryRotateMs = 0;        // last rotation timestamp
 static const unsigned long DRY_ROTATE_MS = 60000; // 60s rotation interval
 
 static uint16_t humidityColor(uint8_t level) {
-  if (level <= 2)
-    return CLR_GREEN;
-  if (level == 3)
-    return CLR_YELLOW;
-  if (level == 4)
-    return CLR_ORANGE;
+  if (level <= 2) return CLR_GREEN;
+  if (level == 3) return CLR_YELLOW;
+  if (level == 4) return CLR_ORANGE;
   return CLR_RED;
 }
 
@@ -480,8 +465,7 @@ static int8_t findDryingUnit(AmsState &ams, uint8_t idx) {
   uint8_t found = 0;
   for (uint8_t i = 0; i < ams.unitCount && i < AMS_MAX_UNITS; i++  ) {
     if (ams.units[i].dryRemainMin > 0) {
-      if (found == idx)
-        return i;
+      if (found == idx) return i;
       found++;
     }
   }
@@ -512,8 +496,7 @@ static void drawIdleDrying(PrinterSlot &p) {
     tft.fillScreen(CLR_BG);
     resetGaugeTextCache();
   }
-  if (dryCount <= 1)
-    dryDisplayIdx = 0;
+  if (dryCount <= 1) dryDisplayIdx = 0;
 
   int8_t ui = findDryingUnit(s.ams, dryDisplayIdx);
   if (ui < 0) return; // no drying unit found (shouldn't happen)
@@ -537,7 +520,8 @@ static void drawIdleDrying(PrinterSlot &p) {
 
   // === Progress bar (top, y=0-5) ===
   uint8_t dryProgress = 0;
-  if (u.dryTotalMin > 0 && u.dryRemainMin <= u.dryTotalMin) dryProgress = 100 - (uint8_t)((uint32_t)u.dryRemainMin * 100 / u.dryTotalMin);
+  if (u.dryTotalMin > 0 && u.dryRemainMin <= u.dryTotalMin)
+    dryProgress = 100 - (uint8_t)((uint32_t)u.dryRemainMin * 100 / u.dryTotalMin);
   if (dataChanged  ) {
     drawLedProgressBar(tft, 0, dryProgress);
   }
@@ -573,16 +557,22 @@ static void drawIdleDrying(PrinterSlot &p) {
   if (!dataChanged) return;
 
   // === AMS unit name (below header) ===
-  uint8_t displayNum = (u.id >= 128) ? (u.id - 128 + 1) : (u.id + 1);
-  char unitName[20];
-  if (dryCount > 1) snprintf(unitName, sizeof(unitName), "AMS %d  (%d/%d)", displayNum, dryDisplayIdx + 1, dryCount);
-  else snprintf(unitName, sizeof(unitName), "AMS %d", displayNum);
+  {
+    bool isHT = (u.id >= 128);
+    uint8_t displayNum = isHT ? (u.id - 128 + 1) : (u.id + 1);
+    const char* prefix = isHT ? "AMS HT" : "AMS";
+    char unitName[24];
+    if (dryCount > 1)
+      snprintf(unitName, sizeof(unitName), "%s %d  (%d/%d)", prefix, displayNum, dryDisplayIdx + 1, dryCount);
+    else
+      snprintf(unitName, sizeof(unitName), "%s %d", prefix, displayNum);
 
   tft.fillRect(0, 30, SCREEN_W, 20, CLR_BG);
   tft.setTextDatum(MC_DATUM);
   tft.setTextFont(2);
   tft.setTextColor(CLR_ORANGE, CLR_BG);
   tft.drawString(unitName, cx, 40);
+  }
 
 #if defined(DISPLAY_240x320)
   // === 240x320: Centered large temp + remaining + humidity ===
@@ -591,7 +581,7 @@ static void drawIdleDrying(PrinterSlot &p) {
     tft.fillRect(0, 55, SCREEN_W, 75, CLR_BG);
 
     char tempBuf[14];
-    snprintf(tempBuf, sizeof(tempBuf), "%.1f", u.temp);
+    snprintf(tempBuf, sizeof(tempBuf), "%.0f", u.temp);
     tft.setTextDatum(MC_DATUM);
     tft.setTextFont(7);
     tft.setTextColor(CLR_ORANGE, CLR_BG);
@@ -600,7 +590,7 @@ static void drawIdleDrying(PrinterSlot &p) {
 
     tft.setTextFont(4);
     tft.setTextDatum(ML_DATUM);
-    tft.drawString("'C", cx - 10 + tempW / 2 + 2, 86);
+    tft.drawString("\xB0""C", cx - 10 + tempW / 2 + 2, 86);
   }
 
   // === Remaining time ===
@@ -610,8 +600,10 @@ static void drawIdleDrying(PrinterSlot &p) {
     char timeBuf[20];
     uint16_t h = u.dryRemainMin / 60;
     uint16_t m = u.dryRemainMin % 60;
-    if (h > 0) snprintf(timeBuf, sizeof(timeBuf), "%dh %02dm remaining", h, m);
-    else snprintf(timeBuf, sizeof(timeBuf), "%dm remaining", m);
+    if (h > 0)
+      snprintf(timeBuf, sizeof(timeBuf), "%dh %02dm remaining", h, m);
+    else
+      snprintf(timeBuf, sizeof(timeBuf), "%dm remaining", m);
 
     tft.setTextDatum(MC_DATUM);
     tft.setTextFont(4);
@@ -637,7 +629,7 @@ static void drawIdleDrying(PrinterSlot &p) {
     tft.fillRect(0, 55, SCREEN_W, 65, CLR_BG);
 
     char tempBuf[14];
-    snprintf(tempBuf, sizeof(tempBuf), "%.1f", u.temp);
+    snprintf(tempBuf, sizeof(tempBuf), "%.0f", u.temp);
     tft.setTextDatum(MC_DATUM);
     tft.setTextFont(7);
     tft.setTextColor(CLR_ORANGE, CLR_BG);
@@ -646,7 +638,7 @@ static void drawIdleDrying(PrinterSlot &p) {
 
     tft.setTextFont(4);
     tft.setTextDatum(ML_DATUM);
-    tft.drawString("'C", cx - 10 + tempW / 2 + 2, 68);
+    tft.drawString("\xB0""C", cx - 10 + tempW / 2 + 2, 68);
   }
 
   // === Remaining time ===
@@ -655,8 +647,10 @@ static void drawIdleDrying(PrinterSlot &p) {
     char timeBuf[20];
     uint16_t h = u.dryRemainMin / 60;
     uint16_t m = u.dryRemainMin % 60;
-    if (h > 0) snprintf(timeBuf, sizeof(timeBuf), "%dh %02dm remaining", h, m);
-    else snprintf(timeBuf, sizeof(timeBuf), "%dm remaining", m);
+    if (h > 0)
+      snprintf(timeBuf, sizeof(timeBuf), "%dh %02dm remaining", h, m);
+    else
+      snprintf(timeBuf, sizeof(timeBuf), "%dm remaining", m);
 
     tft.setTextDatum(MC_DATUM);
     tft.setTextFont(2);
@@ -697,22 +691,22 @@ static void drawIdleDrying(PrinterSlot &p) {
       if (!netSettings.use24h) {
         ampm = etaH < 12 ? "AM" : "PM";
         etaH = etaH % 12;
-        if (etaH == 0)
-          etaH = 12;
+        if (etaH == 0) etaH = 12;
       }
       if (etaTm.tm_yday != now.tm_yday || etaTm.tm_year != now.tm_year) {
-        if (netSettings.use24h) snprintf(etaBuf, sizeof(etaBuf), "ETA: %02d.%02d. %02d:%02d",
+        if (netSettings.use24h)
+          snprintf(etaBuf, sizeof(etaBuf), "ETA: %02d.%02d. %02d:%02d",
                etaTm.tm_mday, etaTm.tm_mon + 1, etaH, etaTm.tm_min);
-        else snprintf(etaBuf, sizeof(etaBuf), "ETA: %02d/%02d %d:%02d%s",
+        else
+          snprintf(etaBuf, sizeof(etaBuf), "ETA: %02d/%02d %d:%02d%s",
                etaTm.tm_mon + 1, etaTm.tm_mday, etaH, etaTm.tm_min, ampm);
-      }
+      } else {
+        if (netSettings.use24h)
+          snprintf(etaBuf, sizeof(etaBuf), "ETA: %02d:%02d", etaH, etaTm.tm_min);
       else
-      {
-        if (netSettings.use24h) snprintf(etaBuf, sizeof(etaBuf), "ETA: %02d:%02d", etaH, etaTm.tm_min);
-        else snprintf(etaBuf, sizeof(etaBuf), "ETA: %d:%02d %s", etaH, etaTm.tm_min, ampm);
-      }
+          snprintf(etaBuf, sizeof(etaBuf), "ETA: %d:%02d %s", etaH, etaTm.tm_min, ampm);
     }
-    else if (u.dryRemainMin > 0) {
+    } else if (u.dryRemainMin > 0) {
       uint16_t h = u.dryRemainMin / 60;
       uint16_t m = u.dryRemainMin % 60;
       snprintf(etaBuf, sizeof(etaBuf), "ETA: %dh %02dm", h, m);
@@ -828,12 +822,10 @@ static void drawIdle() {
     if (s.gcodeStateId == GCODE_IDLE) {
       stateColor = CLR_GREEN;
       stateStr = "Ready";
-    }
-    else if (s.gcodeStateId == GCODE_FAILED) {
+    } else if (s.gcodeStateId == GCODE_FAILED) {
       stateColor = CLR_RED;
       stateStr = "ERROR";
-    }
-    else if (s.gcodeStateId == GCODE_UNKNOWN) {
+    } else if (s.gcodeStateId == GCODE_UNKNOWN) {
       stateStr = "Waiting...";
     }
     tft.fillRect(0, LY_IDLE_STATE_Y, scrW, LY_IDLE_STATE_H, CLR_BG);
@@ -1006,8 +998,10 @@ static void drawAmsTrayBar(int16_t x, int16_t y, int16_t w, int16_t h,
     uint16_t borderClr = isActive ? TFT_WHITE : CLR_TEXT_DARK;
 
     // Outer border
-    if (isActive) tft.fillRect(x, y, w, h, borderClr);
-    else tft.drawRect(x, y, w, h, borderClr);
+    if (isActive)
+      tft.fillRect(x, y, w, h, borderClr);
+    else
+      tft.drawRect(x, y, w, h, borderClr);
 
     // Inner fill with optional partial remain%
     int16_t ix = x + border, iy = y + border;
@@ -1050,7 +1044,9 @@ static void drawAmsStrip(const AmsState &ams,
   const int16_t usableW = LY_W - 2 * LY_AMS_MARGIN;
 
   // Uniform group width: every group sized for AMS_TRAYS_PER_UNIT bars
-  int16_t barW = (usableW - (units - 1) * LY_AMS_GROUP_GAP - units * (AMS_TRAYS_PER_UNIT - 1) * LY_AMS_BAR_GAP) / (units * AMS_TRAYS_PER_UNIT);
+  int16_t barW = (usableW - (units - 1) * LY_AMS_GROUP_GAP
+                  - units * (AMS_TRAYS_PER_UNIT - 1) * LY_AMS_BAR_GAP)
+                 / (units * AMS_TRAYS_PER_UNIT);
   if (barW > LY_AMS_BAR_MAX_W) barW = LY_AMS_BAR_MAX_W;
   if (barW < 4) barW = 4;
 
@@ -1065,8 +1061,7 @@ static void drawAmsStrip(const AmsState &ams,
     int16_t groupX = startX + u * (groupW + LY_AMS_GROUP_GAP);
 
     uint8_t tc = ams.units[u].trayCount;
-    if (tc == 0)
-      tc = AMS_TRAYS_PER_UNIT;
+    if (tc == 0) tc = AMS_TRAYS_PER_UNIT;
 
     // Center actual bars within the uniform group slot
     int16_t barsW = tc * barW + (tc - 1) * LY_AMS_BAR_GAP;
@@ -1184,6 +1179,7 @@ static void drawAmsZone(const BambuState &s, bool force) {
       tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
       tft.drawString(label, LY_LAND_AMS_X + LY_LAND_AMS_W / 2, gy + barH + 2);
     }
+
   } else {
     drawAmsStrip(s.ams, LY_AMS_Y, LY_AMS_H, LY_AMS_BAR_H);
   }
@@ -1248,10 +1244,12 @@ static void drawPrinting() {
     int16_t scrW = (int16_t)tft.width();
     int16_t scrH = (int16_t)tft.height();
     // Clear right edge if canvas wider than 240 (rotation 1/3)
-    if (scrW > 240) tft.fillRect(240, 0, scrW - 240, scrH, CLR_BG);
+    if (scrW > 240)
+      tft.fillRect(240, 0, scrW - 240, scrH, CLR_BG);
     // Clear below content area if canvas taller than used
     int16_t usedBottom = eff_botY + eff_botH;
-    if (usedBottom < scrH) tft.fillRect(0, usedBottom, scrW, scrH - usedBottom, CLR_BG);
+    if (usedBottom < scrH)
+      tft.fillRect(0, usedBottom, scrW, scrH - usedBottom, CLR_BG);
   }
 #endif
 
@@ -1319,42 +1317,20 @@ static void drawPrinting() {
       // Per-type change detection
       bool needDraw = forceRedraw || typeChanged;
       if (!needDraw) {
-        switch (gt)
-        {
-        case GAUGE_PROGRESS:
-          needDraw = (s.progress != prevState.progress) || (s.remainingMinutes != prevState.remainingMinutes);
-          break;
-        case GAUGE_NOZZLE:
-          needDraw = animating || s.nozzleTemp != prevState.nozzleTemp || s.nozzleTarget != prevState.nozzleTarget;
-          break;
-        case GAUGE_BED:
-          needDraw = animating || s.bedTemp != prevState.bedTemp || s.bedTarget != prevState.bedTarget;
-          break;
-        case GAUGE_PART_FAN:
-          needDraw = animating || s.coolingFanPct != prevState.coolingFanPct;
-          break;
-        case GAUGE_AUX_FAN:
-          needDraw = animating || s.auxFanPct != prevState.auxFanPct;
-          break;
-        case GAUGE_CHAMBER_FAN:
-          needDraw = animating || s.chamberFanPct != prevState.chamberFanPct;
-          break;
-        case GAUGE_CHAMBER_TEMP:
-          needDraw = animating || s.chamberTemp != prevState.chamberTemp;
-          break;
-        case GAUGE_HEATBREAK:
-          needDraw = animating || s.heatbreakFanPct != prevState.heatbreakFanPct;
-          break;
-        case GAUGE_CLOCK:
-          needDraw = true;
-          break; // text cache handles actual redraw
-        case GAUGE_LAYER:
-          needDraw = s.layerNum != prevState.layerNum || s.totalLayers != prevState.totalLayers;
-          break;
+        switch (gt) {
+          case GAUGE_PROGRESS:    needDraw = (s.progress != prevState.progress) || (s.remainingMinutes != prevState.remainingMinutes); break;
+          case GAUGE_NOZZLE:      needDraw = animating || s.nozzleTemp != prevState.nozzleTemp || s.nozzleTarget != prevState.nozzleTarget; break;
+          case GAUGE_BED:         needDraw = animating || s.bedTemp != prevState.bedTemp || s.bedTarget != prevState.bedTarget; break;
+          case GAUGE_PART_FAN:    needDraw = animating || s.coolingFanPct != prevState.coolingFanPct; break;
+          case GAUGE_AUX_FAN:     needDraw = animating || s.auxFanPct != prevState.auxFanPct; break;
+          case GAUGE_CHAMBER_FAN: needDraw = animating || s.chamberFanPct != prevState.chamberFanPct; break;
+          case GAUGE_CHAMBER_TEMP:needDraw = animating || s.chamberTemp != prevState.chamberTemp; break;
+          case GAUGE_HEATBREAK:   needDraw = animating || s.heatbreakFanPct != prevState.heatbreakFanPct; break;
+          case GAUGE_CLOCK:       needDraw = true; break;  // text cache handles actual redraw
+          case GAUGE_LAYER:       needDraw = s.layerNum != prevState.layerNum || s.totalLayers != prevState.totalLayers; break;
         default:
           // AMS humidity / temperature gauges — index derived from enum value
-          if (gt >= GAUGE_AMS_HUM_1 && gt <= GAUGE_AMS_HUM_4)
-          {
+            if (gt >= GAUGE_AMS_HUM_1 && gt <= GAUGE_AMS_HUM_4) {
             uint8_t ui = gt - GAUGE_AMS_HUM_1;
             const AmsUnit &cu = s.ams.units[ui], &pu = prevState.ams.units[ui];
             needDraw = cu.humidityRaw != pu.humidityRaw || cu.humidity != pu.humidity || cu.present != pu.present;
@@ -1413,11 +1389,9 @@ static void drawPrinting() {
         drawLayerGauge(tft, cx, cy, gR, gT, s.layerNum, s.totalLayers, fr);
         break;
       case GAUGE_EMPTY:
-        if (fr)
-          tft.fillCircle(cx, cy, gR + 2, dispSettings.bgColor);
+          if (fr) tft.fillCircle(cx, cy, gR + 2, dispSettings.bgColor);
         break;
-      default:
-      {
+        default: {
         // AMS humidity / temperature gauges — index derived from enum value
         static const char *amsLabel[AMS_MAX_UNITS] = {"AMS 1", "AMS 2", "AMS 3", "AMS 4"};
         if (gt >= GAUGE_AMS_HUM_1 && gt <= GAUGE_AMS_HUM_4) {
@@ -1432,8 +1406,7 @@ static void drawPrinting() {
         } else {
           if (fr)  tft.fillCircle(cx, cy, gR + 2, dispSettings.bgColor);
         }
-      }
-      break;
+        } break;
       }
     }
   }
@@ -1454,13 +1427,11 @@ static void drawPrinting() {
       tft.setTextFont(4);
       tft.setTextColor(CLR_YELLOW, CLR_BG);
       tft.drawString("PAUSED", SCREEN_W / 2, eff_etaTextY);
-    }
-    else if (s.gcodeStateId == GCODE_FAILED) {
+    } else if (s.gcodeStateId == GCODE_FAILED) {
       tft.setTextFont(4);
       tft.setTextColor(CLR_RED, CLR_BG);
       tft.drawString("ERROR!", SCREEN_W / 2, eff_etaTextY);
-    }
-    else if (s.remainingMinutes > 0) {
+    } else if (s.remainingMinutes > 0) {
       // Use time() directly - avoids getLocalTime() race condition with timeout 0.
       // Once NTP syncs the RTC keeps running; ntpSynced latches true forever.
       static bool ntpSynced = false;
@@ -1481,8 +1452,7 @@ static void drawPrinting() {
         if (!netSettings.use24h) {
           ampm = etaH < 12 ? "AM" : "PM";
           etaH = etaH % 12;
-          if (etaH == 0)
-            etaH = 12;
+          if (etaH == 0) etaH = 12;
         }
         if (etaTm.tm_yday != now.tm_yday || etaTm.tm_year != now.tm_year) {
           if (netSettings.use24h)
@@ -1492,8 +1462,10 @@ static void drawPrinting() {
             snprintf(etaBuf, sizeof(etaBuf), "ETA: %02d/%02d %d:%02d%s",
                  etaTm.tm_mon + 1, etaTm.tm_mday, etaH, etaTm.tm_min, ampm);
         } else {
-          if (netSettings.use24h) snprintf(etaBuf, sizeof(etaBuf), "ETA: %02d:%02d", etaH, etaTm.tm_min);
-          else snprintf(etaBuf, sizeof(etaBuf), "ETA: %d:%02d %s", etaH, etaTm.tm_min, ampm);
+          if (netSettings.use24h)
+            snprintf(etaBuf, sizeof(etaBuf), "ETA: %02d:%02d", etaH, etaTm.tm_min);
+          else
+            snprintf(etaBuf, sizeof(etaBuf), "ETA: %d:%02d %s", etaH, etaTm.tm_min, ampm);
         }
         tft.setTextFont(4);
         tft.setTextColor(CLR_GREEN, CLR_BG);
@@ -1535,7 +1507,8 @@ static void drawPrinting() {
   bool tasmotaOnline = tasmotaIsActiveForSlot(rotState.displayIndex);
   float curWatts = tasmotaGetWatts();
 
-  bool showingWifi = !(s.ams.present && s.ams.activeTray < AMS_MAX_TRAYS && s.ams.trays[s.ams.activeTray].present) && !(s.ams.vtPresent && s.ams.activeTray == 254);
+  bool showingWifi = !(s.ams.present && s.ams.activeTray < AMS_MAX_TRAYS && s.ams.trays[s.ams.activeTray].present)
+                  && !(s.ams.vtPresent && s.ams.activeTray == 254);
   bool bottomChanged = forceRedraw ||
              (s.speedLevel != prevState.speedLevel) ||
              (s.doorOpen != prevState.doorOpen) ||
@@ -1567,8 +1540,7 @@ static void drawPrinting() {
       } else {
         drawWifiSignalIndicator(s, eff_botCY);
       }
-    }
-    else if (s.ams.vtPresent && s.ams.activeTray == 254) {
+    } else if (s.ams.vtPresent && s.ams.activeTray == 254) {
       tft.drawCircle(10, eff_botCY, 5, CLR_TEXT_DARK);
       tft.fillCircle(10, eff_botCY, 4, s.ams.vtColorRgb565);
       tft.setTextDatum(ML_DATUM);
@@ -1677,8 +1649,7 @@ static void drawFinished() {
     // Printer indicator dots (multi-printer)
     if (getActiveConnCount() > 1) {
       for (uint8_t di = 0; di < MAX_ACTIVE_PRINTERS; di++) {
-        if (!isPrinterConfigured(di))
-          continue;
+        if (!isPrinterConfigured(di)) continue;
         uint16_t dotClr = (di == rotState.displayIndex) ? CLR_GREEN : CLR_TEXT_DARK;
         tft.fillCircle(cx - 5 + di * 10, LY_HDR_DOT_CY, 3, dotClr);
       }
@@ -1746,108 +1717,127 @@ static void drawFinished() {
 
   // === AMS strip (portrait 240x320 only) ===
 #if defined(DISPLAY_240x320)
+  static uint8_t prevFinAmsCount = 0;
+  static uint8_t prevFinAmsActive = 255;
   static uint16_t prevFinAmsColors[AMS_MAX_TRAYS] = {0};
   static bool prevFinAmsPresent[AMS_MAX_TRAYS] = {false};
   static int8_t prevFinAmsRemain[AMS_MAX_TRAYS];
 
   bool amsChanged = forceRedraw ||
-            (s.ams.unitCount != prevFinAmsCount) ||
-            (s.ams.activeTray != prevFinAmsActive);
-  if (!amsChanged) {
-    for (uint8_t i = 0; i < s.ams.unitCount * AMS_TRAYS_PER_UNIT && !amsChanged; i++) {
-      amsChanged = (s.ams.trays[i].present != prevFinAmsPresent[i]) ||
-             (s.ams.trays[i].colorRgb565 != prevFinAmsColors[i]) ||
-             (s.ams.trays[i].remain != prevFinAmsRemain[i]);
-    }
+					(s.ams.unitCount != prevFinAmsCount) ||
+					(s.ams.activeTray != prevFinAmsActive);
+  if (!land && s.ams.present && s.ams.unitCount > 0)
+  {
+	  if (!amsChanged)
+	  {
+		  for (uint8_t i = 0; i < s.ams.unitCount * AMS_TRAYS_PER_UNIT && !amsChanged; i++)
+		  {
+			  amsChanged = (s.ams.trays[i].present != prevFinAmsPresent[i]) ||
+						   (s.ams.trays[i].colorRgb565 != prevFinAmsColors[i]) ||
+						   (s.ams.trays[i].remain != prevFinAmsRemain[i]);
+		  }
+	  }
+	  if (amsChanged)
+	  {
+		  prevFinAmsCount = s.ams.unitCount;
+		  prevFinAmsActive = s.ams.activeTray;
+		  for (uint8_t i = 0; i < AMS_MAX_TRAYS; i++)
+		  {
+			  prevFinAmsPresent[i] = s.ams.trays[i].present;
+			  prevFinAmsColors[i] = s.ams.trays[i].colorRgb565;
+			  prevFinAmsRemain[i] = s.ams.trays[i].remain;
+		  }
+		  drawAmsStrip(s.ams, LY_FIN_AMS_Y, LY_FIN_AMS_H, LY_FIN_AMS_BAR_H);
+	  }
   }
-  if (!land && s.ams.present && s.ams.unitCount > 0  ) {
-    if (amsChanged) {
-      prevFinAmsCount = s.ams.unitCount;
-      prevFinAmsActive = s.ams.activeTray;
-      for (uint8_t i = 0; i < AMS_MAX_TRAYS; i++) {
-        prevFinAmsPresent[i] = s.ams.trays[i].present;
-        prevFinAmsColors[i] = s.ams.trays[i].colorRgb565;
-        prevFinAmsRemain[i] = s.ams.trays[i].remain;
-      }
-      drawAmsStrip(s.ams, LY_FIN_AMS_Y, LY_FIN_AMS_H, LY_FIN_AMS_BAR_H);
-    }
-  } else {
-	// =====================================================================
-	//  LANDSCAPE: vertical strip on right side (x=244, 72px wide)
-	//  AMS groups stacked vertically, each group has 4 VERTICAL bars
-	//  side-by-side (same orientation as portrait / physical AMS)
-	// =====================================================================
-	if (amsChanged) {
-      prevFinAmsCount = s.ams.unitCount;
-      prevFinAmsActive = s.ams.activeTray;
-      for (uint8_t i = 0; i < AMS_MAX_TRAYS; i++) {
-        prevFinAmsPresent[i] = s.ams.trays[i].present;
-        prevFinAmsColors[i] = s.ams.trays[i].colorRgb565;
-        prevFinAmsRemain[i] = s.ams.trays[i].remain;
-      }
-      tft.fillRect(LY_LAND_AMS_X - 4, LY_LAND_AMS_TOP, LY_LAND_AMS_W + 8,
-             LY_LAND_AMS_BOT - LY_LAND_AMS_TOP, CLR_BG);
-      uint8_t units = s.ams.unitCount;
-      if (units == 0 || units > AMS_MAX_UNITS)
-        return;
+  else
+  {
+	  // =====================================================================
+	  //  LANDSCAPE: vertical strip on right side (x=244, 72px wide)
+	  //  AMS groups stacked vertically, each group has 4 VERTICAL bars
+	  //  side-by-side (same orientation as portrait / physical AMS)
+	  // =====================================================================
+	  if (amsChanged)
+	  {
+		  prevFinAmsCount = s.ams.unitCount;
+		  prevFinAmsActive = s.ams.activeTray;
+		  for (uint8_t i = 0; i < AMS_MAX_TRAYS; i++)
+		  {
+			  prevFinAmsPresent[i] = s.ams.trays[i].present;
+			  prevFinAmsColors[i] = s.ams.trays[i].colorRgb565;
+			  prevFinAmsRemain[i] = s.ams.trays[i].remain;
+		  }
+		  tft.fillRect(LY_LAND_AMS_X - 4, LY_LAND_AMS_TOP, LY_LAND_AMS_W + 8,
+					   LY_LAND_AMS_BOT - LY_LAND_AMS_TOP, CLR_BG);
+		  uint8_t units = s.ams.unitCount;
+		  if (units == 0 || units > AMS_MAX_UNITS)
+			  return;
 
-      const int16_t totalH = LY_LAND_AMS_BOT - LY_LAND_AMS_TOP; // ~208px
-      const int16_t groupGap = 6;
-      const int16_t labelH = 12; // space for AMS letter label below bars
-      const int16_t barGap = 2;  // gap between bars
+		  const int16_t totalH = LY_LAND_AMS_BOT - LY_LAND_AMS_TOP; // ~208px
+		  const int16_t groupGap = 6;
+		  const int16_t labelH = 12; // space for AMS letter label below bars
+		  const int16_t barGap = 2;	 // gap between bars
 
-      // Find max tray count across units for bar width sizing
-      uint8_t maxTC = 0;
-      for (uint8_t u = 0; u < units; u++) {
-        uint8_t tc = s.ams.units[u].trayCount;
-        if (tc == 0)
-          tc = AMS_TRAYS_PER_UNIT;
-        if (tc > maxTC)
-          maxTC = tc;
-      }
+		  // Find max tray count across units for bar width sizing
+		  uint8_t maxTC = 0;
+		  for (uint8_t u = 0; u < units; u++)
+		  {
+			  uint8_t tc = s.ams.units[u].trayCount;
+			  if (tc == 0)
+				  tc = AMS_TRAYS_PER_UNIT;
+			  if (tc > maxTC)
+				  maxTC = tc;
+		  }
 
-      int16_t barW = (LY_LAND_AMS_W - (maxTC - 1) * barGap) / maxTC;
-      if (barW > 16) barW = 16;
-      if (barW < 4) barW = 4;
+		  int16_t barW = (LY_LAND_AMS_W - (maxTC - 1) * barGap) / maxTC;
+		  if (barW > 16)
+			  barW = 16;
+		  if (barW < 4)
+			  barW = 4;
 
-      // Calculate group height: bar height + label
-      int16_t groupH = (totalH - (units - 1) * groupGap) / units;
-      int16_t barH = groupH - labelH;
-      if (barH > 50) barH = 50;
-      if (barH < 10) barH = 10;
+		  // Calculate group height: bar height + label
+		  int16_t groupH = (totalH - (units - 1) * groupGap) / units;
+		  int16_t barH = groupH - labelH;
+		  if (barH > 50)
+			  barH = 50;
+		  if (barH < 10)
+			  barH = 10;
 
-      // Vertical centering
-      int16_t actualGroupH = barH + labelH;
-      int16_t totalUsed = actualGroupH * units + (units - 1) * groupGap;
-      int16_t startY = LY_LAND_AMS_TOP + (totalH - totalUsed) / 2;
+		  // Vertical centering
+		  int16_t actualGroupH = barH + labelH;
+		  int16_t totalUsed = actualGroupH * units + (units - 1) * groupGap;
+		  int16_t startY = LY_LAND_AMS_TOP + (totalH - totalUsed) / 2;
 
-      for (uint8_t u = 0; u < units; u++) {
-        uint8_t tc = s.ams.units[u].trayCount;
-        if (tc == 0) tc = AMS_TRAYS_PER_UNIT;
+		  for (uint8_t u = 0; u < units; u++)
+		  {
+			  uint8_t tc = s.ams.units[u].trayCount;
+			  if (tc == 0)
+				  tc = AMS_TRAYS_PER_UNIT;
 
-        int16_t actualGroupW = barW * tc + (tc - 1) * barGap;
-        int16_t barsX = LY_LAND_AMS_X + (LY_LAND_AMS_W - actualGroupW) / 2;
-        int16_t gy = startY + u * (actualGroupH + groupGap);
+			  int16_t actualGroupW = barW * tc + (tc - 1) * barGap;
+			  int16_t barsX = LY_LAND_AMS_X + (LY_LAND_AMS_W - actualGroupW) / 2;
+			  int16_t gy = startY + u * (actualGroupH + groupGap);
 
-        for (uint8_t t = 0; t < tc; t++) {
-          uint8_t trayIdx = u * AMS_TRAYS_PER_UNIT + t;
-          int16_t bx = barsX + t * (barW + barGap);
-          drawAmsTrayBar(bx, gy, barW, barH,
-                   s.ams.trays[trayIdx], trayIdx == s.ams.activeTray);
-        }
+			  for (uint8_t t = 0; t < tc; t++)
+			  {
+				  uint8_t trayIdx = u * AMS_TRAYS_PER_UNIT + t;
+				  int16_t bx = barsX + t * (barW + barGap);
+				  drawAmsTrayBar(bx, gy, barW, barH,
+								 s.ams.trays[trayIdx], trayIdx == s.ams.activeTray);
+			  }
 
-        // AMS label below bars
-        // Show AMS humidity after AMS label
-        char label[11];
-        const AmsUnit &cu = s.ams.units[u];
-        snprintf(label, sizeof(label), "AMS %c %d%%", 'A' + u, cu.humidityRaw);
-        tft.setTextDatum(TC_DATUM);
-        bool sm = dispSettings.smallLabels;
-        tft.setTextFont(sm ? 1 : 2);
-        tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
-        tft.drawString(label, LY_LAND_AMS_X + LY_LAND_AMS_W / 2, gy + barH + 2);
-      }
-    }
+			  // AMS label below bars
+			  // Show AMS humidity after AMS label
+			  char label[11];
+			  const AmsUnit &cu = s.ams.units[u];
+			  snprintf(label, sizeof(label), "AMS %c %d%%", 'A' + u, cu.humidityRaw);
+			  tft.setTextDatum(TC_DATUM);
+			  bool sm = dispSettings.smallLabels;
+			  tft.setTextFont(sm ? 1 : 2);
+			  tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
+			  tft.drawString(label, LY_LAND_AMS_X + LY_LAND_AMS_W / 2, gy + barH + 2);
+		  }
+	  }
   }
 #endif
 
@@ -1964,10 +1954,7 @@ void updateDisplay() {
       uint8_t dp = 0;
       AmsUnit *du = nullptr;
       for (uint8_t i = 0; i < sh.ams.unitCount; i++) {
-        if (sh.ams.units[i].dryRemainMin > 0) {
-          du = &sh.ams.units[i];
-          break;
-        }
+        if (sh.ams.units[i].dryRemainMin > 0) { du = &sh.ams.units[i]; break; }
       }
       if (du && du->dryTotalMin > 0 && du->dryRemainMin <= du->dryTotalMin)
         dp = 100 - (uint8_t)((uint32_t)du->dryRemainMin * 100 / du->dryTotalMin);
@@ -2012,8 +1999,7 @@ void updateDisplay() {
     break;
 
   case SCREEN_AP_MODE:
-    if (forceRedraw)
-      drawAPMode();
+      if (forceRedraw) drawAPMode();
     break;
 
   case SCREEN_CONNECTING_WIFI:
@@ -2047,8 +2033,7 @@ void updateDisplay() {
     break;
 
   case SCREEN_CLOCK:
-    if (!dispSettings.pongClock)
-      drawClock();
+      if (!dispSettings.pongClock) drawClock();
     // Pong clock is ticked before the throttle (above)
     break;
 
