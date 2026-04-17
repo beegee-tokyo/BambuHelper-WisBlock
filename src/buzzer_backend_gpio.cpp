@@ -32,7 +32,6 @@ void buzzerBackendTick() {
 }
 
 void buzzerBackendShutdown() {
-  sanitizeBuzzerPin();
   buzzerBackendStop();
 }
 
