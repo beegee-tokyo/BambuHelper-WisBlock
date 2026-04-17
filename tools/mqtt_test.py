@@ -17,6 +17,7 @@ import socket
 import time
 import json
 import base64
+import urllib.request
 import paho.mqtt.client as mqtt
 
 # ==== EDIT THESE WITH YOUR PRINTER INFO ====
@@ -37,31 +38,62 @@ SERIAL       = "YOUR_SERIAL_NUMBER"    # e.g. "01P00C..." (MUST be UPPERCASE)
 PORT          = 8883
 
 # Derive cloud userId from JWT token
-def extract_user_id(token):
-    """Extract uid from JWT payload and return 'u_{uid}'."""
+def extract_user_id_jwt(token):
+    """Extract uid from JWT payload and return 'u_{uid}'. Returns None for non-JWT tokens."""
     try:
         parts = token.split(".")
         if len(parts) < 2:
             return None
         # Fix base64url padding
-        payload_b64 = parts[1]
-        payload_b64 += "=" * (4 - len(payload_b64) % 4)
-        payload_b64 = payload_b64.replace("-", "+").replace("_", "/")
+        payload_b64 = parts[1].replace("-", "+").replace("_", "/")
+        payload_b64 += "=" * ((4 - len(payload_b64) % 4) % 4)
         decoded = base64.b64decode(payload_b64)
         data = json.loads(decoded)
         uid = data.get("uid") or data.get("sub") or data.get("user_id")
         if uid:
             return f"u_{uid}"
     except Exception as e:
-        print(f"  [WARN] Failed to decode JWT: {e}")
+        print(f"  [INFO] Token is not a JWT ({e}), will try profile API")
     return None
+
+# Fetch userId from Bambu profile API (fallback for opaque tokens)
+def fetch_user_id_api(token, region):
+    """Call /v1/user-service/my/profile to get uid. Returns 'u_{uid}' or None."""
+    api_base = "https://api.bambulab.cn" if region == "cn" else "https://api.bambulab.com"
+    url = f"{api_base}/v1/user-service/my/profile"
+    req = urllib.request.Request(url, headers={
+        "Authorization": f"Bearer {token}",
+        "User-Agent": "bambu_network_agent/01.09.05.01",
+        "Accept": "application/json",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        print(f"  [WARN] Profile API request failed: {e}")
+        return None
+
+    # uid can be at top level, inside "data", or as "uidStr"/"userId"
+    def pick(obj):
+        if not isinstance(obj, dict):
+            return None
+        return (obj.get("uidStr") or obj.get("uid")
+                or obj.get("userId") or obj.get("user_id"))
+    uid = pick(data) or pick(data.get("data") if isinstance(data.get("data"), dict) else None)
+    if uid is None:
+        print(f"  [WARN] No uid in profile response: {json.dumps(data)[:300]}")
+        return None
+    return f"u_{uid}"
 
 # Set up connection params based on mode
 if MODE == "cloud":
-    CLOUD_USER_ID = extract_user_id(CLOUD_TOKEN)
+    CLOUD_USER_ID = extract_user_id_jwt(CLOUD_TOKEN)
     if not CLOUD_USER_ID:
-        print("ERROR: Could not extract userId from cloud token!")
-        print("       Check that CLOUD_TOKEN is a valid JWT.")
+        print("  JWT decode failed - falling back to profile API...")
+        CLOUD_USER_ID = fetch_user_id_api(CLOUD_TOKEN, CLOUD_REGION)
+    if not CLOUD_USER_ID:
+        print("ERROR: Could not determine userId from cloud token!")
+        print("       Token may be expired or invalid. Re-run get_token.py.")
         exit(1)
     BROKER   = "cn.mqtt.bambulab.com" if CLOUD_REGION == "cn" else "us.mqtt.bambulab.com"
     USERNAME = CLOUD_USER_ID
