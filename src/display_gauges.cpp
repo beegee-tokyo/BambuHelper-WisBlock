@@ -205,6 +205,65 @@ static inline uint8_t sqrt_fraction(uint32_t num) {
   return fpr >> osh;
 }
 
+// Subpixel AA wedge line with explicit background color. This avoids the
+// integer endpoint truncation in LovyanGFX::drawWedgeLine when arc caps move.
+static inline float wedgeLineDistanceAA(float xpax, float ypay,
+                                        float bax, float bay, float dr = 0.0f) {
+  const float denom = bax * bax + bay * bay;
+  const float h = (denom > 0.0f)
+    ? fmaxf(fminf((xpax * bax + ypay * bay) / denom, 1.0f), 0.0f)
+    : 0.0f;
+  const float dx = xpax - bax * h;
+  const float dy = ypay - bay * h;
+  return sqrtf(dx * dx + dy * dy) + h * dr;
+}
+
+static void drawWedgeLineAA(lgfx::LovyanGFX& tft,
+                            float ax, float ay, float bx, float by,
+                            float ar, float br,
+                            uint16_t fg_color, uint16_t bg_color) {
+  constexpr float pixelAlphaGain  = 255.0f;
+  constexpr float loAlphaTheshold = 1.0f / 32.0f;
+  constexpr float hiAlphaTheshold = 1.0f - loAlphaTheshold;
+
+  if (ar < 0.0f || br < 0.0f) return;
+  if (fabsf(ax - bx) < 0.01f && fabsf(ay - by) < 0.01f) bx += 0.01f;
+
+  int32_t x0 = (int32_t)floorf(fminf(ax - ar, bx - br));
+  int32_t x1 = (int32_t) ceilf(fmaxf(ax + ar, bx + br));
+  int32_t y0 = (int32_t)floorf(fminf(ay - ar, by - br));
+  int32_t y1 = (int32_t) ceilf(fmaxf(ay + ar, by + br));
+
+  const int32_t maxX = (int32_t)tft.width() - 1;
+  const int32_t maxY = (int32_t)tft.height() - 1;
+  if (x1 < 0 || y1 < 0 || x0 > maxX || y0 > maxY) return;
+  if (x0 < 0) x0 = 0;
+  if (y0 < 0) y0 = 0;
+  if (x1 > maxX) x1 = maxX;
+  if (y1 > maxY) y1 = maxY;
+
+  const float bax = bx - ax;
+  const float bay = by - ay;
+  const float rdt = ar - br;
+  const float aaRadius = ar + 0.5f;
+
+  for (int32_t yp = y0; yp <= y1; ++yp) {
+    const float ypay = yp - ay;
+    for (int32_t xp = x0; xp <= x1; ++xp) {
+      const float xpax = xp - ax;
+      const float alpha = aaRadius - wedgeLineDistanceAA(xpax, ypay, bax, bay, rdt);
+      if (alpha <= loAlphaTheshold) continue;
+      if (alpha > hiAlphaTheshold) {
+        tft.drawPixel(xp, yp, fg_color);
+        continue;
+      }
+      const uint8_t blendAlpha = (uint8_t)(alpha * pixelAlphaGain);
+      if (blendAlpha == 0) continue;
+      tft.drawPixel(xp, yp, alphaBlend565(blendAlpha, fg_color, bg_color));
+    }
+  }
+}
+
 // Scan-quadrant AA annulus slice. Port of TFT_eSPI::drawArc (smooth=true).
 // Angles: 0°=6 o'clock, clockwise, range 0-360. r=outer, ir=inner (inclusive).
 // Ends are NOT anti-aliased — caller adds radial AA wedges for smooth ends.
@@ -312,22 +371,28 @@ static void drawArcAA(lgfx::LovyanGFX& tft, int32_t x, int32_t y,
   if (startAngle <= 270 && endAngle >= 270) tft.drawFastHLine(x + r - w, y, w, fg_color);
 }
 
-// Equivalent to TFT_eSPI::drawSmoothArc with square ends. Adds AA radial
-// wedge caps at startAngle and endAngle, then calls drawArcAA for body.
-static void drawSmoothArcLGFX(lgfx::LovyanGFX& tft, int32_t x, int32_t y,
-                              int32_t r, int32_t ir,
-                              uint32_t startAngle, uint32_t endAngle,
-                              uint16_t fg_color, uint16_t bg_color) {
+static void drawArcCapAA(lgfx::LovyanGFX& tft, int32_t x, int32_t y,
+                         int32_t r, int32_t ir, uint32_t angle,
+                         uint16_t fg_color, uint16_t bg_color) {
   constexpr float deg2rad = 3.14159265358979f / 180.0f;
-  if (endAngle != startAngle && (startAngle != 0 || endAngle != 360)) {
-    float sx = -sinf(startAngle * deg2rad);
-    float sy = +cosf(startAngle * deg2rad);
-    float ex = -sinf(endAngle * deg2rad);
-    float ey = +cosf(endAngle * deg2rad);
-    tft.drawWedgeLine(sx * ir + x, sy * ir + y, sx * r + x, sy * r + y, 0.3f, 0.3f, fg_color);
-    tft.drawWedgeLine(ex * ir + x, ey * ir + y, ex * r + x, ey * r + y, 0.3f, 0.3f, fg_color);
-  }
-  drawArcAA(tft, x, y, r, ir, startAngle, endAngle, fg_color, bg_color);
+  const float sx = -sinf(angle * deg2rad);
+  const float sy = +cosf(angle * deg2rad);
+  drawWedgeLineAA(tft,
+                  sx * ir + x, sy * ir + y,
+                  sx *  r + x, sy *  r + y,
+                  0.3f, 0.3f, fg_color, bg_color);
+}
+
+static void drawArcSegmentAA(lgfx::LovyanGFX& tft, int16_t cx, int16_t cy,
+                             int16_t radius, int16_t innerRadius,
+                             uint16_t a0, uint16_t a1,
+                             uint16_t fg_color, uint16_t bg_color,
+                             bool drawStartCap, bool drawEndCap,
+                             uint16_t startCapBg, uint16_t endCapBg) {
+  if (a1 <= a0) return;
+  if (drawStartCap) drawArcCapAA(tft, cx, cy, radius, innerRadius, a0, fg_color, startCapBg);
+  if (drawEndCap)   drawArcCapAA(tft, cx, cy, radius, innerRadius, a1, fg_color, endCapBg);
+  drawArcAA(tft, cx, cy, radius, innerRadius, a0, a1, fg_color, bg_color);
 }
 
 static void drawArcFill(lgfx::LovyanGFX& tft, int16_t cx, int16_t cy,
@@ -335,25 +400,28 @@ static void drawArcFill(lgfx::LovyanGFX& tft, int16_t cx, int16_t cy,
                         uint16_t fillEnd, uint16_t fillColor, bool forceRedraw) {
   const uint16_t startAngle = 60;
   const uint16_t endAngle = 300;
-  const uint16_t clampedFillEnd = fillEnd > endAngle ? endAngle : fillEnd;
+  const uint16_t clampedFillEnd =
+    (fillEnd < startAngle) ? startAngle : ((fillEnd > endAngle) ? endAngle : fillEnd);
   uint16_t bg = dispSettings.bgColor;
   uint16_t track = dispSettings.trackColor;
-
-  auto arcDraw = [&](uint16_t a0, uint16_t a1, uint16_t color) {
-    if (a1 <= a0) return;
-    drawSmoothArcLGFX(tft, cx, cy, radius, radius - thickness, a0, a1, color, bg);
-  };
+  const int16_t innerRadius = radius - thickness;
 
   if (forceRedraw) {
     tft.fillCircle(cx, cy, radius + 2, bg);
-    arcDraw(startAngle, endAngle, track);
+    drawArcSegmentAA(tft, cx, cy, radius, innerRadius,
+                     startAngle, endAngle, track, bg,
+                     true, true, bg, bg);
   }
 
   if (clampedFillEnd > startAngle) {
-    arcDraw(startAngle, clampedFillEnd, fillColor);
+    drawArcSegmentAA(tft, cx, cy, radius, innerRadius,
+                     startAngle, clampedFillEnd, fillColor, bg,
+                     true, true, bg, (clampedFillEnd < endAngle) ? track : bg);
   }
   if (clampedFillEnd < endAngle) {
-    arcDraw(clampedFillEnd, endAngle, track);
+    drawArcSegmentAA(tft, cx, cy, radius, innerRadius,
+                     clampedFillEnd, endAngle, track, bg,
+                     false, true, bg, bg);
   }
 }
 
