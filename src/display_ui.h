@@ -18,7 +18,7 @@ enum ScreenState {
 };
 
 extern lgfx::LovyanGFX* tft_ptr;
-// Convenience reference — all callers use `tft.method()` unchanged
+// Convenience reference — all callers use `tft.method()` unchanged.
 extern lgfx::LovyanGFX& tft;
 
 void initDisplay();

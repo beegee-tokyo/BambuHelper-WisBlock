@@ -12,6 +12,7 @@
 #include "tasmota.h"
 #include <WiFi.h>
 #include <time.h>
+#include <new>   // placement new for CYD panel variant selection
 
 // =============================================================================
 //  LovyanGFX board-specific configurations
@@ -59,11 +60,19 @@ static LGFX_S3 _tft_instance;
 
 #elif defined(DISPLAY_CYD)
 // --- ESP32-2432S028 (CYD) + ILI9341 240x320 ---------------------------------
-class LGFX_CYD : public lgfx::LGFX_Device {
-  lgfx::Panel_ILI9341 _panel;
-  lgfx::Bus_SPI       _bus;
+// Two hardware variants exist:
+//   - V2 (default): Panel_ILI9341_2 + color inversion — matches the TFT_eSPI
+//     ILI9341_2_DRIVER + TFT_INVERSION_ON used on `main`.
+//   - Classic: plain Panel_ILI9341, no color inversion — for units that show
+//     mirrored/rotated image on V2.
+// Selected at runtime from DisplaySettings.cydPanelClassic (persisted in
+// Preferences).
+template <class PanelT, bool InvertColors, uint8_t RotationOffset>
+class LGFX_CYD_Impl : public lgfx::LGFX_Device {
+  PanelT          _panel;
+  lgfx::Bus_SPI   _bus;
 public:
-  LGFX_CYD() {
+  LGFX_CYD_Impl() {
     {
       auto cfg = _bus.config();
       cfg.spi_host   = VSPI_HOST;
@@ -89,7 +98,8 @@ public:
       cfg.panel_height  = 320;
       cfg.offset_x      = 0;
       cfg.offset_y      = 0;
-      cfg.invert        = false;
+      cfg.offset_rotation = RotationOffset;
+      cfg.invert        = InvertColors;
       cfg.rgb_order     = false;
       cfg.readable      = false;
       _panel.config(cfg);
@@ -97,7 +107,101 @@ public:
     setPanel(&_panel);
   }
 };
-static LGFX_CYD _tft_instance;
+using LGFX_CYD_V2      = LGFX_CYD_Impl<lgfx::Panel_ILI9341_2, true,  6>;
+using LGFX_CYD_Classic = LGFX_CYD_Impl<lgfx::Panel_ILI9341,   false, 2>;
+// One of these is placement-new'd into _tft_storage in initDisplay() based on
+// dispSettings.cydPanelClassic. Alignment covers both; size covers the larger.
+union LGFX_CYD_Storage {
+  LGFX_CYD_V2      v2;
+  LGFX_CYD_Classic classic;
+  LGFX_CYD_Storage() : v2() {}   // default-construct V2 for static-init safety
+  ~LGFX_CYD_Storage() {}
+};
+static LGFX_CYD_Storage   _tft_storage;
+// _tft_instance is a reference to the base LGFX_Device for the currently
+// constructed variant. Defaults to V2; rebound via placement-new in
+// initDisplay() if the user selected Classic.
+static lgfx::LGFX_Device& _tft_instance = _tft_storage.v2;
+
+#elif defined(BOARD_IS_WS200)
+// --- Waveshare ESP32-S3-Touch-LCD-2 (2.0" ST7789 240x320) --------------------
+class LGFX_WS200 : public lgfx::LGFX_Device {
+  lgfx::Panel_ST7789  _panel;
+  lgfx::Bus_SPI       _bus;
+public:
+  LGFX_WS200() {
+    {
+      auto cfg = _bus.config();
+      cfg.spi_host   = SPI2_HOST;
+      cfg.spi_mode   = 0;
+      cfg.freq_write = 80000000;
+      cfg.freq_read  = 16000000;
+      cfg.pin_sclk   = 39;
+      cfg.pin_mosi   = 38;
+      cfg.pin_miso   = 40;
+      cfg.pin_dc     = 42;
+      cfg.use_lock   = true;
+      _bus.config(cfg);
+      _panel.setBus(&_bus);
+    }
+    {
+      auto cfg = _panel.config();
+      cfg.pin_cs   = 45;
+      cfg.pin_rst  = -1;
+      cfg.pin_busy = -1;
+      cfg.memory_width  = 240;
+      cfg.memory_height = 320;
+      cfg.panel_width   = 240;
+      cfg.panel_height  = 320;
+      cfg.offset_x      = 0;
+      cfg.offset_y      = 0;
+      cfg.readable      = false;
+      _panel.config(cfg);
+    }
+    setPanel(&_panel);
+  }
+};
+static LGFX_WS200 _tft_instance;
+
+#elif defined(BOARD_IS_WS154)
+// --- Waveshare ESP32-S3-Touch-LCD-1.54 (1.54" ST7789 240x240) ---------------
+class LGFX_WS154 : public lgfx::LGFX_Device {
+  lgfx::Panel_ST7789  _panel;
+  lgfx::Bus_SPI       _bus;
+public:
+  LGFX_WS154() {
+    {
+      auto cfg = _bus.config();
+      cfg.spi_host   = SPI2_HOST;
+      cfg.spi_mode   = 0;
+      cfg.freq_write = 80000000;
+      cfg.freq_read  = 16000000;
+      cfg.pin_sclk   = 38;
+      cfg.pin_mosi   = 39;
+      cfg.pin_miso   = -1;
+      cfg.pin_dc     = 45;
+      cfg.use_lock   = true;
+      _bus.config(cfg);
+      _panel.setBus(&_bus);
+    }
+    {
+      auto cfg = _panel.config();
+      cfg.pin_cs   = 21;
+      cfg.pin_rst  = 40;
+      cfg.pin_busy = -1;
+      cfg.memory_width  = 240;
+      cfg.memory_height = 240;
+      cfg.panel_width   = 240;
+      cfg.panel_height  = 240;
+      cfg.offset_x      = 0;
+      cfg.offset_y      = 0;
+      cfg.readable      = false;
+      _panel.config(cfg);
+    }
+    setPanel(&_panel);
+  }
+};
+static LGFX_WS154 _tft_instance;
 
 #elif defined(BOARD_IS_C3)
 // --- ESP32-C3 Super Mini + ST7789 240x280 ------------------------------------
@@ -140,10 +244,13 @@ public:
 static LGFX_C3 _tft_instance;
 
 #else
-  #error "No board variant defined. Add BOARD_IS_S3, DISPLAY_CYD, or BOARD_IS_C3 to build_flags."
+  #error "No board variant defined. Add BOARD_IS_S3, DISPLAY_CYD, BOARD_IS_C3, BOARD_IS_WS200 or BOARD_IS_WS154 to build_flags."
 #endif
 
-// Global pointer + reference — accessed via `tft` throughout the codebase
+// Global pointer + reference — accessed via `tft` throughout the codebase.
+// For CYD, _tft_instance is backed by a union (see _tft_storage) that is
+// populated with either the V2 or Classic panel in initDisplay(), so method
+// calls via this reference/pointer dispatch to whichever variant was chosen.
 lgfx::LovyanGFX* tft_ptr = &_tft_instance;
 lgfx::LovyanGFX& tft     = *tft_ptr;
 
@@ -228,28 +335,49 @@ void setBacklight(uint8_t level) {
   lastAppliedBrightness = level;
 }
 
+#if defined(DISPLAY_CYD)
+static void applyCydPanelInversion() {
+  _tft_instance.invertDisplay(dispSettings.invertColors);
+}
+#endif
+
 // ---------------------------------------------------------------------------
 //  Init
 // ---------------------------------------------------------------------------
 void initDisplay() {
   Serial.println("Display: pre-init delay...");
   delay(500);
+#if defined(DISPLAY_CYD)
+  // Pick CYD panel variant based on loaded settings. Default static-init
+  // already constructed V2; swap to Classic if user selected it.
+  if (dispSettings.cydPanelClassic) {
+    _tft_storage.v2.~LGFX_CYD_V2();
+    new (&_tft_storage.classic) LGFX_CYD_Classic();
+    Serial.println("Display: CYD panel variant = Classic (Panel_ILI9341)");
+  } else {
+    Serial.println("Display: CYD panel variant = V2 (Panel_ILI9341_2)");
+  }
+  // _tft_instance reference + tft_ptr already point at the same storage.
+#endif
   Serial.println("Display: calling _tft_instance.init()...");
   _tft_instance.init();  // LovyanGFX configures SPI from the board class above
-#if defined(BOARD_IS_S3) || defined(BOARD_IS_C3)
+#if defined(DISPLAY_CYD)
+  applyCydPanelInversion();
+#elif defined(BOARD_IS_S3) || defined(BOARD_IS_C3) || defined(BOARD_IS_WS200) || defined(BOARD_IS_WS154)
   _tft_instance.invertDisplay(true);  // ST7789 requires color inversion
 #endif
   Serial.println("Display: tft.init() done");
-#if defined(DISPLAY_240x320) && !defined(DISPLAY_CYD)
+#if defined(DISPLAY_240x320)
   // Clear entire GRAM at rotation 0 first (guarantees all 240x320 pixels
   // are addressed). Without this, rotations 1/3 leave 80px of uninitialized
   // VRAM visible as garbage noise on the extra screen edge.
-  // Skipped for CYD — LovyanGFX Panel_ILI9341 handles GRAM differently.
   tft.setRotation(0);
   tft.fillScreen(TFT_BLACK);
 #endif
   tft.setRotation(dispSettings.rotation);
-#if defined(DISPLAY_240x320)
+#if defined(DISPLAY_CYD)
+  applyCydPanelInversion();
+#elif defined(DISPLAY_240x320)
   if (dispSettings.invertColors) _tft_instance.invertDisplay(false);
 #endif
   Serial.println("Display: setRotation done");
@@ -289,7 +417,9 @@ void applyDisplaySettings() {
   tft.fillScreen(TFT_BLACK);
 #endif
   tft.setRotation(dispSettings.rotation);
-#if defined(DISPLAY_240x320)
+#if defined(DISPLAY_CYD)
+  applyCydPanelInversion();
+#elif defined(DISPLAY_240x320)
   _tft_instance.invertDisplay(dispSettings.invertColors ? false : true);
 #endif
   tft.fillScreen(dispSettings.bgColor);

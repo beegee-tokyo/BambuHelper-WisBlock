@@ -47,6 +47,9 @@ struct DisplaySettings {
   bool     smallLabels;       // use smaller gauge labels (Font 1 instead of Font 2)
   bool     showTimeRemaining; // always show time remaining instead of ETA
   bool     invertColors;   // invert display colors (fixes white-bg on some panels)
+  bool     cydPanelClassic; // CYD only: use plain Panel_ILI9341 (no inversion)
+                            // instead of Panel_ILI9341_2 — for the other
+                            // hardware revision that shows mirrored image.
   uint16_t clockTimeColor; // clock digits color (RGB565)
   uint16_t clockDateColor; // clock date/AM-PM color (RGB565)
   GaugeColors progress;

@@ -132,9 +132,9 @@ void tickProgressShimmer(lgfx::LovyanGFX& tft, int16_t y, uint8_t progress, bool
 // ---------------------------------------------------------------------------
 //  Helper: draw arc track + fill, handling decrease properly
 // ---------------------------------------------------------------------------
-static void drawArcFill(lgfx::LovyanGFX& tft, int16_t cx, int16_t cy,
-                        int16_t radius, int16_t thickness,
-                        uint16_t fillEnd, uint16_t fillColor, bool forceRedraw) {
+static void drawArcFillLegacy(lgfx::LovyanGFX& tft, int16_t cx, int16_t cy,
+                              int16_t radius, int16_t thickness,
+                              uint16_t fillEnd, uint16_t fillColor, bool forceRedraw) {
   // Internal angles use TFT_eSPI convention: 0°=bottom (6 o'clock), clockwise.
   // LovyanGFX fillArc uses 0°=right (3 o'clock), clockwise — offset by +90°
   // places the 120° gap at the bottom (6 o'clock), matching the desired layout.
@@ -144,15 +144,17 @@ static void drawArcFill(lgfx::LovyanGFX& tft, int16_t cx, int16_t cy,
   uint16_t bg = dispSettings.bgColor;
   uint16_t track = dispSettings.trackColor;
 
+  // drawArc() renders an anti-aliased annulus slice — equivalent to
+  // TFT_eSPI drawSmoothArc. fillArc() is not anti-aliased on LovyanGFX.
   auto arcDraw = [&](uint16_t a0, uint16_t a1, uint16_t color) {
     float la0 = (float)((a0 + 90u) % 360u);
     float la1 = (float)((a1 + 90u) % 360u);
     if (la0 > la1) {
       // Arc crosses the 0° boundary — split into two segments
-      tft.fillArc(cx, cy, radius, radius - thickness, la0, 360.0f, color);
-      tft.fillArc(cx, cy, radius, radius - thickness, 0.0f,  la1,  color);
+      tft.drawArc(cx, cy, radius, radius - thickness, la0, 360.0f, color);
+      tft.drawArc(cx, cy, radius, radius - thickness, 0.0f,  la1,  color);
     } else {
-      tft.fillArc(cx, cy, radius, radius - thickness, la0, la1, color);
+      tft.drawArc(cx, cy, radius, radius - thickness, la0, la1, color);
     }
   };
 
@@ -169,6 +171,40 @@ static void drawArcFill(lgfx::LovyanGFX& tft, int16_t cx, int16_t cy,
   // Always redraw track for unfilled portion (handles value decrease)
   if (fillEnd < endAngle) {
     arcDraw(fillEnd, endAngle, track);
+  }
+}
+
+static void drawArcFill(lgfx::LovyanGFX& tft, int16_t cx, int16_t cy,
+                        int16_t radius, int16_t thickness,
+                        uint16_t fillEnd, uint16_t fillColor, bool forceRedraw) {
+  const uint16_t startAngle = 60;
+  const uint16_t endAngle = 300;
+  const uint16_t clampedFillEnd = fillEnd > endAngle ? endAngle : fillEnd;
+  uint16_t bg = dispSettings.bgColor;
+  uint16_t track = dispSettings.trackColor;
+
+  auto arcDraw = [&](uint16_t a0, uint16_t a1, uint16_t color) {
+    if (a1 <= a0) return;
+    float la0 = (float)((a0 + 90u) % 360u);
+    float la1 = (float)((a1 + 90u) % 360u);
+    if (la0 > la1) {
+      tft.fillArc(cx, cy, radius, radius - thickness, la0, 360.0f, color);
+      tft.fillArc(cx, cy, radius, radius - thickness, 0.0f,  la1,  color);
+    } else {
+      tft.fillArc(cx, cy, radius, radius - thickness, la0, la1, color);
+    }
+  };
+
+  if (forceRedraw) {
+    tft.fillCircle(cx, cy, radius + 2, bg);
+    arcDraw(startAngle, endAngle, track);
+  }
+
+  if (clampedFillEnd > startAngle) {
+    arcDraw(startAngle, clampedFillEnd, fillColor);
+  }
+  if (clampedFillEnd < endAngle) {
+    arcDraw(clampedFillEnd, endAngle, track);
   }
 }
 

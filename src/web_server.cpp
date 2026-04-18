@@ -392,6 +392,7 @@ R"rawliteral(
           <label for="shtire">Show remaining time instead of ETA</label>
         </div>
 %INVCOL_ROW%
+%CYD_PANEL_ROW%
       </div>
 
       <div style="margin-top:16px;padding-top:12px;border-top:1px solid #30363D">
@@ -1608,6 +1609,20 @@ static bool resolvePlaceholder(const char* name, String& out) {
 #endif
     return true;
   }
+  if (strcmp(name, "CYD_PANEL_ROW") == 0) {
+#if defined(DISPLAY_CYD)
+    out = "<div class=\"check-row\">"
+      "<input type=\"checkbox\" id=\"cydcls\" value=\"1\" ";
+    out += dispSettings.cydPanelClassic ? "checked" : "";
+    out += " onchange=\"toggleSetting('cydcls',this.checked)\">"
+      "<label for=\"cydcls\">Use Classic CYD panel fallback "
+      "(older units only - device will reboot)</label>"
+      "</div>";
+#else
+    out = "";
+#endif
+    return true;
+  }
 
   // --- Colors (global + per-gauge) ---
   if (strcmp(name, "CLR_BG") == 0)    { rgb565ToHtml(dispSettings.bgColor, buf); out = buf; return true; }
@@ -2185,6 +2200,7 @@ static void handleToggleSetting() {
   else if (key == "slbl")    dispSettings.smallLabels = on;
   else if (key == "shtire")  dispSettings.showTimeRemaining = on;
   else if (key == "invcol")  dispSettings.invertColors = on;
+  else if (key == "cydcls")  dispSettings.cydPanelClassic = on;
   else if (key == "nighten") dpSettings.nightModeEnabled = on;
   else if (key == "use24h")  netSettings.use24h = on;
   else {
@@ -2194,6 +2210,7 @@ static void handleToggleSetting() {
 
   saveSettings();
   if (key == "invcol") applyDisplaySettings();
+  if (key == "cydcls") scheduleRestart(800);  // panel swap needs a fresh init
   if (key == "use24h") { resetClock(); resetPongClock(); triggerDisplayTransition(); }
   if (key == "kps") {
     BambuState& st = printers[rotState.displayIndex].state;
