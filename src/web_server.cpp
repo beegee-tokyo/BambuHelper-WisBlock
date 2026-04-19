@@ -1123,6 +1123,7 @@ function applyDisplay(){
   else if(ap==='custom'){p.append('fmins',document.getElementById('fmins').value);p.append('clock','1');}
   else{p.append('fmins',ap);p.append('clock','1');}
   if(document.getElementById('dack').checked) p.append('dack','1');
+  if(document.getElementById('kps').checked) p.append('kps','1');
   if(document.getElementById('abar').checked) p.append('abar','1');
   if(document.getElementById('pong').checked) p.append('pong','1');
   if(document.getElementById('slbl').checked) p.append('slbl','1');
