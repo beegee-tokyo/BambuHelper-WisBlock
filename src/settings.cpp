@@ -112,6 +112,7 @@ void defaultDisplaySettings(DisplaySettings& ds) {
   ds.smallLabels = false;
   ds.showTimeRemaining = false;
   ds.invertColors = false;
+  ds.cydPanelClassic = false;
   ds.clockTimeColor = CLR_TEXT;
   ds.clockDateColor = CLR_TEXT_DIM;
 
@@ -241,6 +242,7 @@ void loadSettings() {
   dispSettings.smallLabels = prefs.getBool("dsp_slbl", def.smallLabels);
   dispSettings.showTimeRemaining = prefs.getBool("dsp_shtire", def.showTimeRemaining);
   dispSettings.invertColors = prefs.getBool("dsp_inv", def.invertColors);
+  dispSettings.cydPanelClassic = prefs.getBool("dsp_cydcls", def.cydPanelClassic);
   dispSettings.clockTimeColor = prefs.getUShort("dsp_clkt", CLR_TEXT);
   dispSettings.clockDateColor = prefs.getUShort("dsp_clkd", CLR_TEXT_DIM);
 
@@ -377,6 +379,7 @@ void saveSettings() {
   prefs.putBool("dsp_slbl", dispSettings.smallLabels);
   prefs.putBool("dsp_shtire", dispSettings.showTimeRemaining);
   prefs.putBool("dsp_inv", dispSettings.invertColors);
+  prefs.putBool("dsp_cydcls", dispSettings.cydPanelClassic);
   prefs.putUShort("dsp_clkt", dispSettings.clockTimeColor);
   prefs.putUShort("dsp_clkd", dispSettings.clockDateColor);
 
