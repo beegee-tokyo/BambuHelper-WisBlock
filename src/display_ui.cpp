@@ -1782,7 +1782,7 @@ static void drawAmsZone(const BambuState& s, bool force) {
 
     const int16_t totalH = amsBot - LY_LAND_AMS_TOP;
     const int16_t groupGap = 6;
-    const int16_t labelH = 12;  // space for AMS letter label below bars
+    const int16_t labelH = 16;  // font 2 label height below bars
     const int16_t barGap = 2;   // gap between bars
 
     // Find max tray count across units for bar width sizing
@@ -1832,7 +1832,7 @@ static void drawAmsZone(const BambuState& s, bool force) {
       bool sm = dispSettings.smallLabels;
       tft.setTextFont(sm ? 1 : 2);
       tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
-      tft.drawString(label, LY_LAND_AMS_X + LY_LAND_AMS_W / 2, gy + barH + 2);
+      tft.drawString(label, LY_LAND_AMS_X + LY_LAND_AMS_W / 2, gy + barH + 1);
     }
 
   } else if (enhanced) {
@@ -2255,7 +2255,15 @@ static void drawPrinting() {
     // overlaps eff_botY=222..240) and drawAmsZone wouldn't repaint it.
 #if defined(DISPLAY_240x320)
     if (botW < uiW() && unitsZoneChanged) {
-      tft.fillRect(botW, eff_botY, uiW() - botW, eff_botH, CLR_BG);
+      int16_t cleanY = eff_botY;
+      int16_t cleanH = eff_botH;
+      if (landAmsCol) {
+        cleanY = LY_LAND_AMS_BOT_FULL;
+        cleanH = eff_botY + eff_botH - cleanY;
+      }
+      if (cleanH > 0) {
+        tft.fillRect(botW, cleanY, uiW() - botW, cleanH, CLR_BG);
+      }
     }
 #endif
     tft.fillRect(0, eff_botY, botW, eff_botH, CLR_BG);
