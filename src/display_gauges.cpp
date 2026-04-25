@@ -33,9 +33,13 @@ void drawLedProgressBar(lgfx::LovyanGFX& tft, int16_t y, uint8_t progress) {
   uint16_t bg = dispSettings.bgColor;
   uint16_t track = dispSettings.trackColor;
 
-  const int16_t barW = LY_BAR_W;
+  // Use the active canvas width so the bar reaches both edges in landscape
+  // (rotation 1/3 on 240x320 → tft.width()=320). 240x240 and portrait keep
+  // their existing centered 236px bar via LY_BAR_W when canvas == SCREEN_W.
+  const int16_t scrW = (int16_t)tft.width();
+  const int16_t barW = (scrW > SCREEN_W) ? (scrW - 4) : LY_BAR_W;
   const int16_t barH = LY_BAR_H;
-  const int16_t barX = (SCREEN_W - barW) / 2;
+  const int16_t barX = (scrW - barW) / 2;
 
   tft.fillRect(barX, y, barW, barH, bg);
 
@@ -88,9 +92,17 @@ void tickProgressShimmer(lgfx::LovyanGFX& tft, int16_t y, uint8_t progress, bool
   if (now - shimmerLastMs < SHIMMER_INTERVAL) return;
   shimmerLastMs = now;
 
-  const int16_t barW = LY_BAR_W;
+  const int16_t scrW = (int16_t)tft.width();
+  const int16_t barW = (scrW > SCREEN_W) ? (scrW - 4) : LY_BAR_W;
   const int16_t barH = LY_BAR_H;
-  const int16_t barX = (SCREEN_W - barW) / 2;
+  const int16_t barX = (scrW - barW) / 2;
+  // Reset shimmer if bar geometry changed (rotation flip) so the cached
+  // erase position from the old bar doesn't smear pixels onto the new one.
+  static int16_t prevBarW = -1;
+  if (prevBarW != barW) {
+    shimmerPos = -1;
+    prevBarW = barW;
+  }
   int16_t fillW = (progress * barW) / 100;
   if (fillW < SHIMMER_W + 4) return;  // too small for shimmer
 

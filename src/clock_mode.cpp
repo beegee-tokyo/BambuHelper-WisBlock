@@ -11,7 +11,11 @@
 #define CLK_COLON_W   LY_ARK_COLON_W   // 12
 
 #define CLK_TIME_W    (4 * CLK_DIGIT_W + CLK_COLON_W)
-#define CLK_TIME_X    ((LY_W - CLK_TIME_W) / 2)
+// Center horizontally on the active canvas — matters for 240x320 landscape
+// where tft.width() returns 320, not LY_W (240).
+static inline int clkScrW() { return (int)tft.width(); }
+static inline int clkTimeX() { return (clkScrW() - CLK_TIME_W) / 2; }
+#define CLK_TIME_X    (clkTimeX())
 
 static int prevMinute = -1;
 static char prevDigits[5] = {0, 0, 0, 0, 0};
@@ -112,15 +116,17 @@ void drawClock() {
       tft.setTextFont(4);
       tft.setTextColor(dateClr, bg);
       int ampmW = tft.textWidth("PM");
-      tft.fillRect(LY_W / 2 - ampmW / 2 - 2, LY_CLK_AMPM_Y - 12, ampmW + 4, 24, bg);
-      tft.drawString(ampm, LY_W / 2, LY_CLK_AMPM_Y);
+      const int sw = clkScrW();
+      tft.fillRect(sw / 2 - ampmW / 2 - 2, LY_CLK_AMPM_Y - 12, ampmW + 4, 24, bg);
+      tft.drawString(ampm, sw / 2, LY_CLK_AMPM_Y);
       strlcpy(prevAmPm, ampm, sizeof(prevAmPm));
     }
   } else if (prevAmPm[0] != '\0') {
     tft.setTextDatum(MC_DATUM);
     tft.setTextFont(4);
     int ampmW = tft.textWidth("PM");
-    tft.fillRect(LY_W / 2 - ampmW / 2 - 2, LY_CLK_AMPM_Y - 12, ampmW + 4, 24, bg);
+    const int sw = clkScrW();
+    tft.fillRect(sw / 2 - ampmW / 2 - 2, LY_CLK_AMPM_Y - 12, ampmW + 4, 24, bg);
     prevAmPm[0] = '\0';
   }
 
@@ -146,8 +152,9 @@ void drawClock() {
     int dateW = tft.textWidth(prevDateBuf[0] ? prevDateBuf : dateBuf);
     int newW = tft.textWidth(dateBuf);
     int clearW = (dateW > newW) ? dateW : newW;
-    tft.fillRect(LY_W / 2 - clearW / 2 - 2, LY_CLK_DATE_Y - 12, clearW + 4, 24, bg);
-    tft.drawString(dateBuf, LY_W / 2, LY_CLK_DATE_Y);
+    const int sw = clkScrW();
+    tft.fillRect(sw / 2 - clearW / 2 - 2, LY_CLK_DATE_Y - 12, clearW + 4, 24, bg);
+    tft.drawString(dateBuf, sw / 2, LY_CLK_DATE_Y);
     strlcpy(prevDateBuf, dateBuf, sizeof(prevDateBuf));
   }
 }

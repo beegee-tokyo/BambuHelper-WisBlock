@@ -291,6 +291,7 @@ R"rawliteral(
           <div><label style="font-size:11px;color:#8B949E">Bot-right</label><select id="gs5" class="gauge-slot-sel"></select></div>
         </div>
         <button type="button" style="margin-top:8px;padding:4px 10px;font-size:11px;background:transparent;color:#8B949E;border:1px solid #30363D;border-radius:4px;cursor:pointer" onclick="resetGaugeLayout()">Reset to default</button>
+
         <div style="margin-top:12px">
           <button type="button" class="btn btn-blue" onclick="saveGaugeLayout()">Save Gauge Layout</button>
         </div>
