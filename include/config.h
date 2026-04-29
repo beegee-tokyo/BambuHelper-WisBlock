@@ -4,7 +4,7 @@
 // =============================================================================
 //  Firmware version
 // =============================================================================
-#define FW_VERSION          "v2.7.2"
+#define FW_VERSION          "v2.8"
 
 // Board variant — injected into the web UI for OTA asset filtering.
 // Normally set via build_flags in platformio.ini; this is a fallback.
@@ -18,7 +18,9 @@
 #include "layout.h"
 #define SCREEN_W        LY_W
 #define SCREEN_H        LY_H
-#define BACKLIGHT_PIN   TFT_BL  // set by build flags per board
+#ifndef BACKLIGHT_PIN
+#define BACKLIGHT_PIN   TFT_BL  // TFT_eSPI: set via -D TFT_BL=N; LovyanGFX: set via -D BACKLIGHT_PIN=N
+#endif
 #define BACKLIGHT_CH    0
 #define BACKLIGHT_FREQ  5000
 #define BACKLIGHT_RES   8
@@ -113,6 +115,12 @@
 // =============================================================================
 //  Buzzer (optional passive buzzer)
 // =============================================================================
-#define BUZZER_DEFAULT_PIN    5       // default GPIO for buzzer
+#if defined(BOARD_IS_C3)
+#define BUZZER_DEFAULT_PIN    3       // C3: GPIO 3 (GPIO 5 is backlight)
+#elif defined(DISPLAY_CYD) || defined(DISPLAY_240x320)
+#define BUZZER_DEFAULT_PIN    26      // CYD: GPIO 26
+#else
+#define BUZZER_DEFAULT_PIN    5       // S3: GPIO 5
+#endif
 
 #endif // CONFIG_H

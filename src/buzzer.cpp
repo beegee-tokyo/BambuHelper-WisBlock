@@ -1,7 +1,18 @@
 #include "buzzer.h"
 #include "buzzer_backend.h"
 #include "settings.h"
+#include "config.h"
 #include <time.h>
+
+void sanitizeBuzzerPin() {
+  if (buzzerSettings.pin == 0) return;
+#if defined(BACKLIGHT_PIN)
+  if (buzzerSettings.pin == BACKLIGHT_PIN) {
+    Serial.printf("Buzzer: pin %d conflicts with backlight, disabling\n", buzzerSettings.pin);
+    buzzerSettings.pin = 0;
+  }
+#endif
+}
 
 // ---------------------------------------------------------------------------
 //  Tone patterns (frequency Hz, duration ms) - 0 freq = pause
@@ -121,7 +132,6 @@ void buzzerTick() {
   if (millis() - stepStartMs < currentMelody[melodyIdx].ms) return;
 
   melodyIdx++;
-
   if (melodyIdx >= melodyLen) {
     playing = false;
     currentMelody = nullptr;

@@ -291,6 +291,7 @@ R"rawliteral(
           <div><label style="font-size:11px;color:#8B949E">Bot-right</label><select id="gs5" class="gauge-slot-sel"></select></div>
         </div>
         <button type="button" style="margin-top:8px;padding:4px 10px;font-size:11px;background:transparent;color:#8B949E;border:1px solid #30363D;border-radius:4px;cursor:pointer" onclick="resetGaugeLayout()">Reset to default</button>
+
         <div style="margin-top:12px">
           <button type="button" class="btn btn-blue" onclick="saveGaugeLayout()">Save Gauge Layout</button>
         </div>
@@ -392,6 +393,7 @@ R"rawliteral(
           <label for="shtire">Show remaining time instead of ETA</label>
         </div>
 %INVCOL_ROW%
+%CYD_PANEL_ROW%
       </div>
 
       <div style="margin-top:16px;padding-top:12px;border-top:1px solid #30363D">
@@ -1122,6 +1124,7 @@ function applyDisplay(){
   else if(ap==='custom'){p.append('fmins',document.getElementById('fmins').value);p.append('clock','1');}
   else{p.append('fmins',ap);p.append('clock','1');}
   if(document.getElementById('dack').checked) p.append('dack','1');
+  if(document.getElementById('kps').checked) p.append('kps','1');
   if(document.getElementById('abar').checked) p.append('abar','1');
   if(document.getElementById('pong').checked) p.append('pong','1');
   if(document.getElementById('slbl').checked) p.append('slbl','1');
@@ -1602,6 +1605,20 @@ static bool resolvePlaceholder(const char* name, String& out) {
     out += dispSettings.invertColors ? "checked" : "";
     out += " onchange=\"toggleSetting('invcol',this.checked)\">"
       "<label for=\"invcol\">Invert display colors (fix white background)</label>"
+      "</div>";
+#else
+    out = "";
+#endif
+    return true;
+  }
+  if (strcmp(name, "CYD_PANEL_ROW") == 0) {
+#if defined(DISPLAY_CYD)
+    out = "<div class=\"check-row\">"
+      "<input type=\"checkbox\" id=\"cydcls\" value=\"1\" ";
+    out += dispSettings.cydPanelClassic ? "checked" : "";
+    out += " onchange=\"toggleSetting('cydcls',this.checked)\">"
+      "<label for=\"cydcls\">Use Classic CYD panel fallback "
+      "(older units only - device will reboot)</label>"
       "</div>";
 #else
     out = "";
@@ -2185,6 +2202,7 @@ static void handleToggleSetting() {
   else if (key == "slbl")    dispSettings.smallLabels = on;
   else if (key == "shtire")  dispSettings.showTimeRemaining = on;
   else if (key == "invcol")  dispSettings.invertColors = on;
+  else if (key == "cydcls")  dispSettings.cydPanelClassic = on;
   else if (key == "nighten") dpSettings.nightModeEnabled = on;
   else if (key == "use24h")  netSettings.use24h = on;
   else {
@@ -2194,6 +2212,7 @@ static void handleToggleSetting() {
 
   saveSettings();
   if (key == "invcol") applyDisplaySettings();
+  if (key == "cydcls") scheduleRestart(800);  // panel swap needs a fresh init
   if (key == "use24h") { resetClock(); resetPongClock(); triggerDisplayTransition(); }
   if (key == "kps") {
     BambuState& st = printers[rotState.displayIndex].state;

@@ -39,10 +39,11 @@
 #define LY_AMS_LABEL_OFFY 4     // label offset below bars
 #define LY_AMS_MARGIN     8     // left/right margin
 #define LY_AMS_BAR_MAX_W  30    // max bar width (cap for 1 AMS)
+#define LY_AMS_BAR_MAX_W_EXTRAS 26  // cap for enhanced portrait mode (1 AMS, with filament type labels)
 
 // --- CYD landscape mode (rotation 1 or 3 = 320x240 actual) ---
 // Left 240px: gauge area (same grid positions as portrait/default 240x240)
-// Right 80px: AMS vertical strip
+// Right 80px: status badge + AMS vertical strip
 // ETA + bottom bar use 240x240-style Y to fit within 240px height.
 #define LY_LAND_GAUGE_W     240   // gauge area width (left side)
 #define LY_LAND_ETA_Y       190   // ETA zone Y (same as default 240x240)
@@ -55,8 +56,13 @@
 // AMS vertical strip (right side)
 #define LY_LAND_AMS_X       244   // left edge of AMS column (4px gap from gauges)
 #define LY_LAND_AMS_W       72    // usable width
-#define LY_LAND_AMS_TOP     28    // below header
-#define LY_LAND_AMS_BOT     236   // near bottom edge
+#define LY_LAND_AMS_TOP     60    // below header + status badge (badge spans y=30..54)
+#define LY_LAND_AMS_BOT_FULL  236 // AMS bottom when bottom-bar limited to 240 (3-4 AMS)
+#define LY_LAND_AMS_BOT_SHORT 210 // AMS bottom when bottom-bar spans 320 (0-2 AMS)
+// Status badge (above AMS, replaces header badge in landscape when AMS present)
+#define LY_LAND_BADGE_Y     30
+#define LY_LAND_BADGE_H     24
+#define LY_LAND_BADGE_CY    42
 
 // --- Printing: ETA / info zone (moved down for 320px) ---
 #define LY_ETA_Y        260
@@ -109,7 +115,16 @@
 #define LY_FIN_BOT_Y    290
 #define LY_FIN_BOT_H    22
 #define LY_FIN_WIFI_Y   308
-// --- Finished screen (landscape overrides - fit within 240px height) ---
+// --- Finished screen (landscape overrides - fit within 240px height, full 320 wide) ---
+// Gauges side-by-side, centered cluster on x=160 (32px gap between R=32 gauges).
+// Vertical layout: gauges 18..82, "Print Complete!" centered at 118, file 150,
+// kWh 178 (clear band 169..187 — does NOT touch file at 142..158), bot 216..236.
+#define LY_LAND_FIN_GL       112   // left gauge center X (left edge x=80)
+#define LY_LAND_FIN_GR       208   // right gauge center X (right edge x=240)
+#define LY_LAND_FIN_GY        50   // gauge row center Y (R=32 ? spans 18..82)
+#define LY_LAND_FIN_TEXT_Y   118   // "Print Complete!" (font 4 ~26px tall)
+#define LY_LAND_FIN_FILE_Y   150   // file name (font 2 ~16px tall, spans 142..158)
+#define LY_LAND_FIN_KWH_Y    178   // kWh row (font 2) — clear band kwhY-9..kwhY+9 = 169..187
 #define LY_LAND_FIN_BOT_Y    216
 #define LY_LAND_FIN_BOT_H    20
 #define LY_LAND_FIN_WIFI_Y   228
@@ -123,17 +138,13 @@
 #define LY_AP_OPEN_Y      185
 #define LY_AP_IP_Y        210
 
-// --- Simple clock (centered in 320px height or 240px height) ---
+// --- Simple clock (centered in 320px height) ---
 #define LY_CLK_CLEAR_Y   70
 #define LY_CLK_CLEAR_H   200
-// For portrait mode (320px height)
 #define LY_CLK_TIME_Y    140
 #define LY_CLK_AMPM_Y    175
 #define LY_CLK_DATE_Y    205
-// For landscape mode (240px height)
-#define LY_CLK_TIME_Y_L    100
-#define LY_CLK_AMPM_Y_L    135
-#define LY_CLK_DATE_Y_L    155
+
 //  --- Pong/Breakout clock ---
 #define LY_ARK_BRICK_ROWS   5
 #define LY_ARK_COLS          10

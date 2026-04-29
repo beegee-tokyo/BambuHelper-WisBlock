@@ -1,9 +1,11 @@
 #include "buzzer_backend.h"
+#include "buzzer.h"
 #include "settings.h"
 
 #if !defined(BOARD_HAS_ES8311_AUDIO)
 
 void buzzerBackendInit() {
+  sanitizeBuzzerPin();
   if (buzzerSettings.pin == 0) return;
   pinMode(buzzerSettings.pin, OUTPUT);
   digitalWrite(buzzerSettings.pin, LOW);
@@ -20,6 +22,7 @@ void buzzerBackendApplyStep(uint16_t freq) {
 }
 
 void buzzerBackendStop() {
+  sanitizeBuzzerPin();
   if (buzzerSettings.pin == 0) return;
   noTone(buzzerSettings.pin);
   digitalWrite(buzzerSettings.pin, LOW);

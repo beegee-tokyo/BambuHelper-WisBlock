@@ -1,5 +1,6 @@
 #include "settings.h"
 #include "config.h"
+#include "buzzer.h"
 #include "timezones.h"
 #include <Preferences.h>
 
@@ -96,6 +97,7 @@ uint16_t bambuColorToRgb565(const char* rrggbbaa) {
 
   return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
 }
+
 void rgb565ToHtml(uint16_t c, char* buf) {
   uint8_t r = ((c >> 11) & 0x1F) * 255 / 31;
   uint8_t g = ((c >> 5) & 0x3F) * 255 / 63;
@@ -115,6 +117,7 @@ void defaultDisplaySettings(DisplaySettings& ds) {
   ds.smallLabels = false;
   ds.showTimeRemaining = false;
   ds.invertColors = false;
+  ds.cydPanelClassic = false;
   ds.clockTimeColor = CLR_TEXT;
   ds.clockDateColor = CLR_TEXT_DIM;
 
@@ -244,6 +247,7 @@ void loadSettings() {
   dispSettings.smallLabels = prefs.getBool("dsp_slbl", def.smallLabels);
   dispSettings.showTimeRemaining = prefs.getBool("dsp_shtire", def.showTimeRemaining);
   dispSettings.invertColors = prefs.getBool("dsp_inv", def.invertColors);
+  dispSettings.cydPanelClassic = prefs.getBool("dsp_cydcls", def.cydPanelClassic);
   dispSettings.clockTimeColor = prefs.getUShort("dsp_clkt", CLR_TEXT);
   dispSettings.clockDateColor = prefs.getUShort("dsp_clkd", CLR_TEXT_DIM);
 
@@ -329,7 +333,7 @@ void loadSettings() {
   rotState.lastRotateMs = 0;
 
   // Button settings
-#if defined(USE_CST816) || defined(USE_XPT2046) || DISPLAY_240x320
+#if defined(USE_CST816) || defined(USE_XPT2046) || defined(TOUCH_CS)
   buttonType = (ButtonType)prefs.getUChar("btn_type", BTN_TOUCHSCREEN);
 #else
   buttonType = (ButtonType)prefs.getUChar("btn_type", BTN_DISABLED);
@@ -380,6 +384,7 @@ void saveSettings() {
   prefs.putBool("dsp_slbl", dispSettings.smallLabels);
   prefs.putBool("dsp_shtire", dispSettings.showTimeRemaining);
   prefs.putBool("dsp_inv", dispSettings.invertColors);
+  prefs.putBool("dsp_cydcls", dispSettings.cydPanelClassic);
   prefs.putUShort("dsp_clkt", dispSettings.clockTimeColor);
   prefs.putUShort("dsp_clkd", dispSettings.clockDateColor);
 
@@ -478,6 +483,7 @@ void saveButtonSettings() {
 }
 
 void saveBuzzerSettings() {
+  sanitizeBuzzerPin();
   prefs.begin(NVS_NAMESPACE, false);
   prefs.putBool("buz_on", buzzerSettings.enabled);
   prefs.putUChar("buz_pin", buzzerSettings.pin);

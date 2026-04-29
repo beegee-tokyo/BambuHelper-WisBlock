@@ -6,12 +6,10 @@
 // gauge positions, text positions, etc.
 // To add a new display: create layout_xxx.h and add an #elif here.
 
-#if defined(_VARIANT_RAK3112_)
-  #include "layout_rak14014.h" // 240x320 portrait/landscape (RAKwireless)
-#elif defined(DISPLAY_240x320)
-  #include "layout_240x320.h" // 240x320 portrait (CYD, Waveshare)
+#if defined(DISPLAY_240x320)
+#include "layout_240x320.h" // 240x320 portrait (CYD, Waveshare)
 #else
-  #include "layout_default.h" // ESP32-S3 Mini: ST7789 240x240
+#include "layout_default.h" // ESP32-S3 Mini: ST7789 240x240
 #endif
 
 #endif // LAYOUT_H

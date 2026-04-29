@@ -71,6 +71,12 @@ Check [@Keralots BambuHelper repo](https://github.com/Keralots/BambuHelper) for 
 
 ## Hardware
 
+| Component Wisblock | Specification |
+|---|---|
+| MCU | [RAK3312](https://store.rakwireless.com/products/wisblock-core-module-rak3312-lora-wifi-ble) ESP32-S3 |
+| Base Board | [RAK19007](https://store.rakwireless.com/products/rak19007-wisblock-base-board-2nd-gen) Base Board |
+| Display | [RAK14014](https://store.rakwireless.com/products/240x320-pixel-full-color-tft-display-with-touch-screen-rak14014) 320x240 2.4" TFT Touch Screen display |
+| Buzzer | [RAK18001](https://store.rakwireless.com/products/wisblock-buzzer-module-rak18001) Buzzer |
 ### Default Wiring
 
 > **Note:** WisBlock RAK3312" is a modular concepts with the display already integrated. No additional wiring or soldering is required.     
@@ -82,6 +88,7 @@ Check [@Keralots BambuHelper repo](https://github.com/Keralots/BambuHelper) for 
 ### Optional Buzzer Wiring
 
 Optional a [WisBlock RAK18001 Buzzer](https://store.rakwireless.com/products/wisblock-buzzer-module-rak18001) can be added in Sensor Slot A of the WisBlock Base Board.     
+The buzzer is completely optional. If you do not connect one, BambuHelper works normally.
 
 > **Note:** For WisBlock RAK3312 with RAK14014 TFT display and the RAK18001 buzzer, the GPIO pin is `GPIO 21`.
 

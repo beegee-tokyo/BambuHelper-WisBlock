@@ -15,5 +15,6 @@ void buzzerPlay(BuzzerEvent event);
 void buzzerPlayClick();  // short click, ignores quiet hours and playing state
 void buzzerTick();  // call from loop() for non-blocking playback
 bool buzzerIsQuietHour();
+void sanitizeBuzzerPin();  // zero pin in RAM if it conflicts with BACKLIGHT_PIN
 
 #endif // BUZZER_H
