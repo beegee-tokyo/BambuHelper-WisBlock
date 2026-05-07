@@ -275,8 +275,6 @@ static void parseMqttPayload(byte* payload, unsigned int length, BambuState& s, 
   pf["spd_lvl"] = true;
   pf["stat"] = true;  // H2 door sensor (hex string, bit 0x00800000 = door open)
   pf["home_flag"] = true;  // X1 series door sensor (int, bit 23 = door open)
-  pf["chamber_temper_2"] = true;              // 3rd party chamber temperature sensor (P1S)
-  pf["stat_2"] = true; // 3rd party door sensor (P1S hex string, bit 0x00800000 = door open)
   // Note: H2D/H2C extruder data is parsed separately from raw payload (see below)
 
   JsonDocument doc;
@@ -378,23 +376,27 @@ static void parseMqttPayload(byte* payload, unsigned int length, BambuState& s, 
         if (!deserializeJson(amsDoc, amsObj, (size_t)(end - amsObj))) {
           s.ams.present = true;
           JsonArray units = amsDoc["ams"];
+          bool hasUnitsArray = amsDoc["ams"].is<JsonArray>();
           bool hasTraySnapshot = false;
+          if (hasUnitsArray) {
           for (JsonObject unit : units) {
             if (unit["tray"].is<JsonArray>()) {
               hasTraySnapshot = true;
               break;
             }
           }
+          }
 
           bool hasExplicitTrayNow = amsDoc["tray_now"].is<const char*>() && !s.dualNozzle;
           uint8_t rawTrayNow = 255;
           if (hasExplicitTrayNow) rawTrayNow = atoi(amsDoc["tray_now"].as<const char*>());
 
-          // --- Pass 1: unit-level data (always, even partial updates) ---
-          // Clear unit-level visibility for ALL units before rebuilding.
-          // Prevents ghost units staying .present with stale data when a
-          // previously-visible unit disappears from a partial update.
-          // Preserves trayCount (cached until next tray snapshot) and drying totals.
+          uint8_t unitIdx = 0;
+          if (hasUnitsArray) {
+            // --- Pass 1: unit-level data (only when the unit list is present) ---
+            // Some AMS messages carry tray_now/vt_tray without the nested unit
+            // list. Treat those as partial updates; clearing unitCount there
+            // makes the landscape AMS column briefly collapse to the 0-AMS layout.
           s.ams.unitCount = 0;
           s.ams.anyDrying = false;
           for (uint8_t i = 0; i < AMS_MAX_UNITS; i++) {
@@ -412,7 +414,6 @@ static void parseMqttPayload(byte* payload, unsigned int length, BambuState& s, 
               u.dryRemainMin = savedDryRemain;
             }
 
-          uint8_t unitIdx = 0;
           for (JsonObject unit : units) {
             if (!unit["id"].is<const char*>()) continue;
             uint8_t uid = atoi(unit["id"].as<const char*>());
@@ -439,6 +440,7 @@ static void parseMqttPayload(byte* payload, unsigned int length, BambuState& s, 
             unitIdx++;
           }
           if (unitIdx > 0) s.lastUpdate = millis();  // AMS data = connection alive
+          }
 
           // --- Pass 2: tray-level data (only full snapshots) ---
           if (hasTraySnapshot) {
@@ -490,7 +492,7 @@ static void parseMqttPayload(byte* payload, unsigned int length, BambuState& s, 
             }
               s.ams.units[seqIdx].trayCount = parsedTrays;
           }
-          } else if (!units.isNull()) {
+          } else if (hasUnitsArray) {
             MQTT_LOG("AMS partial update - unit data refreshed, keeping cached trays");
           }
 
@@ -641,23 +643,13 @@ static void parseMqttPayload(byte* payload, unsigned int length, BambuState& s, 
     s.bedTarget = print["bed_target_temper"].as<int>();
   }
 
-#ifdef _INTERNAL_ADD_ON_
-  if (print["chamber_temper_2"].is<float>()) {
-    corePrintData = true;
-    s.chamberTemp = print["chamber_temper_2"].as<float>();
-	MQTT_LOG("chamber temp 2 %.1f", s.chamberTemp);
-  } else if (print["chamber_temper_2"].is<int>()) {
-    corePrintData = true;
-    s.chamberTemp = print["chamber_temper_2"].as<int>();
-	MQTT_LOG("chamber temp 2 %d", s.chamberTemp);
-#else
+#ifndef _INTERNAL_ADD_ON_
   if (print["chamber_temper"].is<float>()) {
     corePrintData = true;
     s.chamberTemp = print["chamber_temper"].as<float>();
   } else if (print["chamber_temper"].is<int>()) {
     corePrintData = true;
     s.chamberTemp = print["chamber_temper"].as<int>();
-#endif
   } else if (print["ctc"]["info"]["temp"].is<int>()) {
     // ctc.info.temp may be packed: (target << 16) | current — extract current
     corePrintData = true;
@@ -673,6 +665,7 @@ static void parseMqttPayload(byte* payload, unsigned int length, BambuState& s, 
     corePrintData = true;
     s.chamberTemp = (float)((int)atof(print["device"]["ctc"]["info"]["temp"].as<const char*>()) & 0xFFFF);
   }
+#endif
 
   // H2D/H2C fallback: parse ctc.info.temp from raw payload via memmem
   // (ArduinoJson filter may strip device.ctc due to deep nesting in the
@@ -750,22 +743,6 @@ static void parseMqttPayload(byte* payload, unsigned int length, BambuState& s, 
   //   - X1 series (serial prefix 00M = X1C, 00W = X1E): "home_flag" int,
   //     bit 23 = door open. Matches ha-bambulab convention.
   //   - P1/A1: no door sensor - nothing to parse.
-  // If _INTERNAL_ADD_ON_ is defined an extra door sensor is installed (P1S)
-#ifdef _INTERNAL_ADD_ON_
-  s.doorSensorPresent = true; // External add on has door sensor!
-  if (print["stat_2"].is<const char*>()) {
-    uint64_t statVal = strtoull(print["stat_2"].as<const char*>(), nullptr, 16);
-    bool wasOpen = s.doorOpen;
-	MQTT_LOG("door sensor 2 detected (stat=0x%llX)", statVal);
-	s.doorOpen = (statVal & 0x00800000) != 0;
-    if (!s.doorSensorPresent) {
-      s.doorSensorPresent = true;
-      MQTT_LOG("door sensor 2 detected (stat=0x%llX, door=%s)", statVal, s.doorOpen ? "OPEN" : "CLOSED");
-    } else if (s.doorOpen != wasOpen) {
-      MQTT_LOG("door %s (stat=0x%llX)", s.doorOpen ? "OPENED" : "CLOSED", statVal);
-    }
-  }
-#endif
   if (s.dualNozzle && print["stat"].is<const char*>()) {
     uint64_t statVal = strtoull(print["stat"].as<const char*>(), nullptr, 16);
     bool wasOpen = s.doorOpen;
