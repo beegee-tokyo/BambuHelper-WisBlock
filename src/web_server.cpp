@@ -210,8 +210,15 @@ static const char PAGE_HTML[] PROGMEM = R"rawliteral(
 )rawliteral"
 #ifdef BOARD_LOW_RAM
 										R"rawliteral(
-      <div style="padding:10px;margin-bottom:12px;background:#0D1117;border:1px solid #30363D;border-radius:6px;font-size:12px;color:#8B949E">
-        &#9432; This board supports one printer. Use ESP32-S3 for two printers.
+      <label style="display:flex;align-items:center;gap:8px;padding:10px;margin-bottom:12px;background:#0D1117;border:1px solid #30363D;border-radius:6px;font-size:12px;color:#8B949E;cursor:pointer">
+        <input type="checkbox" id="dualp" value="1" %DUALP% onchange="toggleDualPrinterMode(this.checked)">
+        <span>Enable 2 printer mode (not supported, you may experience issues)</span>
+      </label>
+      <div id="printerTabs" style="display:%TABS_DISP%;gap:8px;margin-bottom:12px">
+        <button class="tab-btn" id="tab0" onclick="selectPrinterTab(0)"
+                style="flex:1;padding:8px;border:1px solid #30363D;border-radius:6px;background:#238636;color:#fff;cursor:pointer;font-weight:600">Printer 1</button>
+        <button class="tab-btn" id="tab1" onclick="selectPrinterTab(1)"
+                style="flex:1;padding:8px;border:1px solid #30363D;border-radius:6px;background:#0D1117;color:#8B949E;cursor:pointer">Printer 2</button>
       </div>
 )rawliteral"
 #else
@@ -244,7 +251,7 @@ static const char PAGE_HTML[] PROGMEM = R"rawliteral(
       </div>
 
       <div id="cloudFields" style="display:none">
-        <p style="font-size:12px;color:#8B949E;margin:10px 0">Connect any printer via Bambu Cloud (no LAN mode needed).<br>Token valid ~3 months. Your password is NOT stored.</p>
+        <p style="font-size:12px;color:#8B949E;margin:10px 0">Connect any printer via Bambu Cloud (no LAN mode needed).<br>Token expires after ~90 days. It may also be invalidated earlier if you "log out everywhere" or change your password - in that case paste a fresh one. Your password is NOT stored.</p>
         <label for="region">Server Region</label>
         <select id="region">
           <option value="us" %REGION_US%>Americas (US)</option>
@@ -553,6 +560,18 @@ static const char PAGE_HTML[] PROGMEM = R"rawliteral(
             </label>
             <p style="font-size:11px;color:#8B949E;margin-top:2px">Audible feedback for capacitive touch buttons</p>
           </div>
+          <div style="margin-top:8px">
+            <label style="display:flex;align-items:center;gap:6px;font-weight:normal;cursor:pointer">
+              <input type="checkbox" id="buzbeden" %BUZ_BED_ALERT%>
+              Sound alert when bed cools after print
+            </label>
+            <p style="font-size:11px;color:#8B949E;margin-top:2px">Plays a second sound when the bed cools below this temperature after a print.</p>
+            <div id="buzBedTempRow" style="display:flex;gap:8px;align-items:center;margin-top:4px">
+              <span style="font-size:12px;color:#8B949E">Threshold:</span>
+              <input type="number" id="buzbedtemp" min="20" max="80" value="%BUZ_BED_TEMP%" style="width:70px">
+              <span style="font-size:12px;color:#8B949E">&deg;C</span>
+            </div>
+          </div>
           <button type="button" id="buzTestBtn" class="btn btn-blue" style="margin-top:12px;width:auto;padding:8px 16px"
                   onclick="testBuzzer()">Test Finished Sound</button>
         </div>
@@ -603,6 +622,8 @@ static const char PAGE_HTML[] PROGMEM = R"rawliteral(
           </div>
         </div>
       </div>
+
+      %BAT_TOGGLE_ROW%
 
       <button type="button" class="btn btn-blue" onclick="saveRotation()">Save Hardware Settings</button>
     </div>
@@ -1100,7 +1121,8 @@ function ledTestEffect(){
 var buzTestSounds=[
   {id:0, name:'Print Finished'},
   {id:1, name:'Error'},
-  {id:2, name:'Connected'}
+  {id:2, name:'Connected'},
+  {id:4, name:'Bed Cooled'}
 ];
 var buzTestIdx=0;
 function testBuzzer(){
@@ -1124,6 +1146,8 @@ function saveRotation(){
   p.append('buzqs',document.getElementById('buzqs').value);
   p.append('buzqe',document.getElementById('buzqe').value);
   p.append('buzclick',document.getElementById('buzclick').checked?'1':'0');
+  p.append('buzbeden',document.getElementById('buzbeden').checked?'1':'0');
+  p.append('buzbedtemp',document.getElementById('buzbedtemp').value);
   p.append('leden',document.getElementById('leden').value);
   p.append('ledpin',document.getElementById('ledpin').value);
   p.append('ledbr',document.getElementById('ledbr').value);
@@ -1133,6 +1157,8 @@ function saveRotation(){
   p.append('ledauto', document.getElementById('ledauto').checked?'1':'0');
   p.append('ledpause',document.getElementById('ledpause').checked?'1':'0');
   p.append('lederr',  document.getElementById('lederr').checked?'1':'0');
+  var bs=document.getElementById('batshow');
+  if(bs) p.append('batshow', bs.checked?'1':'0');
   fetch('/save/rotation',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:p.toString()})
     .then(function(r){return r.json();})
     .then(function(d){if(d.status==='ok') showToast('Settings saved');})
@@ -1244,6 +1270,13 @@ function toggleSetting(key,on){
   }).catch(function(e){showToast('Toggle failed');console.warn('toggleSetting:',e);});
 }
 
+function toggleDualPrinterMode(on){
+  toggleSetting('dualp',on);
+  var t=document.getElementById('printerTabs');
+  if(t) t.style.display=on?'flex':'none';
+  if(!on) selectPrinterTab(0);
+}
+
 // --- Diagnostics ---
 function toggleDebug(on){
   fetch('/debug/toggle',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'on='+(on?'1':'0')}).then(r=>{
@@ -1271,6 +1304,7 @@ function refreshDiag(){
         h+='<div class="stat-row"><span>Pushall recovery:</span><span class="stat-val">'+(rc+rd+rf+ri)+' (P:'+rc+' D:'+rd+' F:'+rf+' I:'+ri+')</span></div>';
         h+='<div class="stat-row"><span>Last pushall:</span><span class="stat-val">'+esc(p.last_pushall_reason||'Never')+' ('+ageText(p.last_pushall_age_s,p.pushall_total>0)+')</span></div>';
         if(p.last_rc!==0) h+='<div class="stat-row"><span>Last error:</span><span class="stat-val" style="color:#F85149">'+esc(p.rc_text)+'</span></div>';
+        if(p.rc_hint) h+='<div style="margin-top:4px;font-size:11px;color:#F0B72F;line-height:1.3">'+esc(p.rc_hint)+'</div>';
         h+='</div>';
       });
     }
@@ -1680,6 +1714,13 @@ static bool resolvePlaceholder(const char* name, String& out) {
     if (strcmp(name, "FMINS") == 0)        { out = String(fm); return true; }
   }
 
+  // --- Experimental dual-printer (BOARD_LOW_RAM only; placeholders are
+  //     unreferenced by HTML on other boards, but resolving them is harmless) ---
+#ifdef BOARD_LOW_RAM
+  if (strcmp(name, "DUALP") == 0)     { out = dualPrinterUnsafe ? "checked" : ""; return true; }
+  if (strcmp(name, "TABS_DISP") == 0) { out = dualPrinterUnsafe ? "flex" : "none"; return true; }
+#endif
+
   // --- Display options ---
   if (strcmp(name, "DACK") == 0)  { out = dpSettings.doorAckEnabled ? "checked" : ""; return true; }
   if (strcmp(name, "KPS") == 0)   { out = dpSettings.keepPrintScreen ? "checked" : ""; return true; }
@@ -1784,6 +1825,8 @@ static bool resolvePlaceholder(const char* name, String& out) {
   if (strcmp(name, "BUZ_QS") == 0)  { out = String(buzzerSettings.quietStartHour); return true; }
   if (strcmp(name, "BUZ_QE") == 0)  { out = String(buzzerSettings.quietEndHour); return true; }
   if (strcmp(name, "BUZ_CLICK") == 0) { out = buzzerSettings.buttonClick ? "checked" : ""; return true; }
+  if (strcmp(name, "BUZ_BED_ALERT") == 0) { out = buzzerSettings.bedCooldownAlert ? "checked" : ""; return true; }
+  if (strcmp(name, "BUZ_BED_TEMP") == 0)  { out = String(buzzerSettings.bedCooldownThresholdC); return true; }
 
   // --- External LED ---
   if (strcmp(name, "LED_OFF") == 0) { out = ledSettings.enabled ? "" : "selected"; return true; }
@@ -1798,6 +1841,22 @@ static bool resolvePlaceholder(const char* name, String& out) {
   if (strcmp(name, "LED_AUTO")      == 0) { out = ledSettings.autoOnWhilePrinting ? "checked" : ""; return true; }
   if (strcmp(name, "LED_PAUSE")     == 0) { out = ledSettings.pauseBreathing ? "checked" : ""; return true; }
   if (strcmp(name, "LED_ERR")       == 0) { out = ledSettings.errorStrobe ? "checked" : ""; return true; }
+
+  // --- Battery indicator (Waveshare boards only) ---
+  if (strcmp(name, "BAT_TOGGLE_ROW") == 0) {
+#if defined(BOARD_HAS_BATTERY)
+    out = "<div style=\"margin-top:16px;padding-top:12px;border-top:1px solid #30363D\">"
+          "<label style=\"display:flex;align-items:center;gap:8px;font-weight:normal;cursor:pointer\">"
+          "<input type=\"checkbox\" id=\"batshow\"";
+    if (dispSettings.showBatteryIndicator) out += " checked";
+    out += "> Show battery indicator</label>"
+           "<p style=\"font-size:11px;color:#8B949E;margin-top:4px\">"
+           "Hide if your board has no battery wired (avoids phantom readings).</p></div>";
+#else
+    out = "";
+#endif
+    return true;
+  }
 
   // --- Tasmota ---
   if (strcmp(name, "TSM_EN") == 0)  { out = tasmotaSettings.enabled ? "checked" : ""; return true; }
@@ -2036,9 +2095,9 @@ static void handleSavePrinter() {
   if (slot >= MAX_ACTIVE_PRINTERS) slot = 0;
 
 #ifdef BOARD_LOW_RAM
-  if (slot > 0) {
+  if (slot > 0 && !dualPrinterUnsafe) {
     server.send(200, "application/json",
-      "{\"status\":\"error\",\"message\":\"This board supports only one printer due to RAM limits. Use ESP32-S3 for two printers.\"}");
+      "{\"status\":\"error\",\"message\":\"Enable experimental 2-printer mode in Printer Settings to configure printer 2.\"}");
     return;
   }
 #endif
@@ -2119,6 +2178,14 @@ static void handleSaveGaugeLayout() {
   uint8_t slot = 0;
   if (server.hasArg("slot")) slot = server.arg("slot").toInt();
   if (slot >= MAX_ACTIVE_PRINTERS) slot = 0;
+
+#ifdef BOARD_LOW_RAM
+  if (slot > 0 && !dualPrinterUnsafe) {
+    server.send(200, "application/json",
+      "{\"status\":\"error\",\"message\":\"Enable experimental 2-printer mode to configure printer 2.\"}");
+    return;
+  }
+#endif
 
   PrinterConfig& cfg = printers[slot].config;
   for (uint8_t g = 0; g < GAUGE_SLOT_COUNT; g++) {
@@ -2261,12 +2328,17 @@ static void handleDebug() {
     p["messages"] = d.messagesRx;
     p["last_rc"] = d.lastRc;
     p["rc_text"] = mqttRcToString(d.lastRc);
+    if (isCloudMode(printers[i].config.mode) &&
+        (d.lastRc == 4 || d.lastRc == 5)) {
+      p["rc_hint"] = "Token expired or invalidated (90-day TTL, or 'log out everywhere'/password change). Paste a fresh token in Setup.";
+    }
     p["tcp_ok"] = d.tcpOk;
     p["pushall_total"] = d.pushallTotal;
     p["rec_print"] = d.recoveryPrint;
     p["rec_conn_dead"] = d.recoveryConnDead;
     p["rec_finish"] = d.recoveryFinish;
     p["rec_idle"] = d.recoveryIdle;
+    p["rec_failed"] = d.recoveryFailed;
     p["last_pushall_reason"] = pushallReasonToString(d.lastPushallReason);
     p["last_pushall_age_s"] = d.lastPushallMs > 0 ? (now - d.lastPushallMs) / 1000UL : 0;
   }
@@ -2308,6 +2380,9 @@ static void handleToggleSetting() {
   else if (key == "cydcls")  dispSettings.cydPanelClassic = on;
   else if (key == "nighten") dpSettings.nightModeEnabled = on;
   else if (key == "use24h")  netSettings.use24h = on;
+#ifdef BOARD_LOW_RAM
+  else if (key == "dualp")   dualPrinterUnsafe = on;
+#endif
   else {
     server.send(400, "text/plain", "Unknown key");
     return;
@@ -2317,6 +2392,16 @@ static void handleToggleSetting() {
   if (key == "invcol") applyDisplaySettings();
   if (key == "cydcls") scheduleRestart(800);  // panel swap needs a fresh init
   if (key == "use24h") { resetClock(); resetPongClock(); triggerDisplayTransition(); }
+#ifdef BOARD_LOW_RAM
+  if (key == "dualp") {
+    if (!on) {
+      // User just disabled 2-printer mode - drop slot 1 from rotation/display
+      disconnectBambuMqtt(1);
+      if (rotState.displayIndex == 1) rotState.displayIndex = 0;
+    }
+    initBambuMqtt();  // re-evaluate slot 1 active state without reboot
+  }
+#endif
   if (key == "kps") {
     BambuState& st = printers[rotState.displayIndex].state;
     ScreenState cur = getScreenState();
@@ -2366,6 +2451,7 @@ static void handleBuzzerTest() {
   uint8_t snd = 0;
   if (server.hasArg("sound")) snd = server.arg("sound").toInt();
   if (snd <= 2) buzzerPlay((BuzzerEvent)snd);
+  else if (snd == 4) buzzerPlay(BUZZ_BED_COOLDOWN);
   server.send(200, "application/json", "{\"status\":\"ok\"}");
 }
 
@@ -2480,8 +2566,25 @@ static void handleSaveRotation() {
   if (server.hasArg("buzclick")) {
     buzzerSettings.buttonClick = (server.arg("buzclick") == "1");
   }
+  if (server.hasArg("buzbeden")) {
+    buzzerSettings.bedCooldownAlert = (server.arg("buzbeden") == "1");
+  }
+  if (server.hasArg("buzbedtemp")) {
+    int t = server.arg("buzbedtemp").toInt();
+    if (t < 20) t = 20;
+    if (t > 80) t = 80;
+    buzzerSettings.bedCooldownThresholdC = (uint8_t)t;
+  }
   saveBuzzerSettings();
   initBuzzer();
+
+  // Battery indicator visibility (Waveshare boards). Always parse so the
+  // form's unchecked state reaches NVS (browsers omit unchecked checkboxes;
+  // saveRotation() JS sends an explicit 0/1 to work around that).
+  if (server.hasArg("batshow")) {
+    dispSettings.showBatteryIndicator = (server.arg("batshow") == "1");
+    saveBatteryIndicatorSetting();
+  }
 
   // External LED — must be parsed AFTER button + buzzer so sanitizeLedPin()
   // sees the freshly-applied buttonPin and buzzerSettings.pin when checking
@@ -2596,6 +2699,7 @@ static void handleSettingsExport() {
   disp["pongClock"] = dispSettings.pongClock;
   disp["smallLabels"] = dispSettings.smallLabels;
   disp["showTimeRemaining"] = dispSettings.showTimeRemaining;
+  disp["showBatteryIndicator"] = dispSettings.showBatteryIndicator;
 
   JsonObject gauges = disp["gauges"].to<JsonObject>();
   JsonObject gPrg = gauges["progress"].to<JsonObject>(); gaugeColorsToJson(gPrg, dispSettings.progress);
@@ -2648,6 +2752,8 @@ static void handleSettingsExport() {
   buz["quietStart"] = buzzerSettings.quietStartHour;
   buz["quietEnd"] = buzzerSettings.quietEndHour;
   buz["buttonClick"] = buzzerSettings.buttonClick;
+  buz["bedCooldownAlert"] = buzzerSettings.bedCooldownAlert;
+  buz["bedCooldownThresholdC"] = buzzerSettings.bedCooldownThresholdC;
 
   // External LED
   JsonObject led = doc["led"].to<JsonObject>();
@@ -2780,6 +2886,7 @@ static void handleSettingsImportFinish() {
     if (disp["pongClock"].is<bool>())           dispSettings.pongClock = disp["pongClock"].as<bool>();
     if (disp["smallLabels"].is<bool>())         dispSettings.smallLabels = disp["smallLabels"].as<bool>();
     if (disp["showTimeRemaining"].is<bool>())   dispSettings.showTimeRemaining = disp["showTimeRemaining"].as<bool>();
+    if (disp["showBatteryIndicator"].is<bool>()) dispSettings.showBatteryIndicator = disp["showBatteryIndicator"].as<bool>();
 
     JsonObject gauges = disp["gauges"];
     if (gauges) {
@@ -2857,6 +2964,11 @@ static void handleSettingsImportFinish() {
       if (qe <= 23) buzzerSettings.quietEndHour = qe;
     }
     if (buz["buttonClick"].is<bool>()) buzzerSettings.buttonClick = buz["buttonClick"].as<bool>();
+    if (buz["bedCooldownAlert"].is<bool>()) buzzerSettings.bedCooldownAlert = buz["bedCooldownAlert"].as<bool>();
+    if (buz["bedCooldownThresholdC"].is<uint8_t>()) {
+      uint8_t t = buz["bedCooldownThresholdC"].as<uint8_t>();
+      if (t >= 20 && t <= 80) buzzerSettings.bedCooldownThresholdC = t;
+    }
   }
 
   // External LED

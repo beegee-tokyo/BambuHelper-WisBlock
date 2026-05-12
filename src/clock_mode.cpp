@@ -1,5 +1,6 @@
 #include "clock_mode.h"
 #include "display_ui.h"
+#include "fonts.h"
 #include "settings.h"
 #include "config.h"
 #include "layout.h"
@@ -50,6 +51,9 @@ void drawClock() {
   uint16_t timeClr = dispSettings.clockTimeColor;
   uint16_t dateClr = dispSettings.clockDateColor;
 
+  // Text size: scale up on high-res displays (480x480 uses 2x layout constants)
+  const int clkTextSize = (SCREEN_W >= 480) ? 2 : 1;
+
   // --- Colon blink (every call, ~250ms) ---
   bool colonOn = (millis() % 1000) < 500;
   if (colonOn != prevColon) {
@@ -57,8 +61,8 @@ void drawClock() {
     int cy = LY_CLK_TIME_Y - CLK_DIGIT_H / 2;
     tft.fillRect(cx, cy, CLK_COLON_W, CLK_DIGIT_H, bg);
 	if (colonOn) {
-      tft.setTextFont(7);
-      tft.setTextSize(1);
+      setFont(tft, FONT_7SEG);
+      tft.setTextSize(clkTextSize);
       tft.setTextColor(timeClr, bg);
       tft.drawChar(':', cx, cy, 7);
     }
@@ -85,8 +89,8 @@ void drawClock() {
   digits[4] = '0' + (now.tm_min % 10);
 
   // Draw only changed digits
-  tft.setTextFont(7);
-  tft.setTextSize(1);
+  setFont(tft, FONT_7SEG);
+  tft.setTextSize(clkTextSize);
   tft.setTextColor(timeClr, bg);
 
   int dy = LY_CLK_TIME_Y - CLK_DIGIT_H / 2;  // top-left Y (MC_DATUM centers at LY_CLK_TIME_Y)
@@ -109,24 +113,27 @@ void drawClock() {
   }
 
   // --- AM/PM (12h mode) / clear stale AM/PM when switching to 24h ---
+  const int ampmFontH = clkTextSize * 12;  // approx height of Font 4 at scaled size
   if (!netSettings.use24h) {
 	  const char *ampm = now.tm_hour < 12 ? "AM" : "PM";
     if (strcmp(ampm, prevAmPm) != 0) {
 		  tft.setTextDatum(MC_DATUM);
-		  tft.setTextFont(4);
+      setFont(tft, FONT_LARGE);
+      tft.setTextSize(clkTextSize);
 		  tft.setTextColor(dateClr, bg);
 		  int ampmW = tft.textWidth("PM");
       const int sw = clkScrW();
-      tft.fillRect(sw / 2 - ampmW / 2 - 2, LY_CLK_AMPM_Y - 12, ampmW + 4, 24, bg);
+      tft.fillRect(sw / 2 - ampmW / 2 - 2, LY_CLK_AMPM_Y - ampmFontH, ampmW + 4, ampmFontH * 2, bg);
       tft.drawString(ampm, sw / 2, LY_CLK_AMPM_Y);
 		  strlcpy(prevAmPm, ampm, sizeof(prevAmPm));
 	  }
   } else if (prevAmPm[0] != '\0') {
 	  tft.setTextDatum(MC_DATUM);
-	  tft.setTextFont(4);
+    setFont(tft, FONT_LARGE);
+    tft.setTextSize(clkTextSize);
 	  int ampmW = tft.textWidth("PM");
     const int sw = clkScrW();
-    tft.fillRect(sw / 2 - ampmW / 2 - 2, LY_CLK_AMPM_Y - 12, ampmW + 4, 24, bg);
+    tft.fillRect(sw / 2 - ampmW / 2 - 2, LY_CLK_AMPM_Y - ampmFontH, ampmW + 4, ampmFontH * 2, bg);
 	  prevAmPm[0] = '\0';
   }
 
@@ -146,14 +153,16 @@ void drawClock() {
 
   if (strcmp(dateBuf, prevDateBuf) != 0) {
     tft.setTextDatum(MC_DATUM);
-    tft.setTextFont(4);
+    setFont(tft, FONT_LARGE);
+    tft.setTextSize(clkTextSize);
     tft.setTextColor(dateClr, bg);
     // Clear previous date, draw new
+    const int dateFontH = clkTextSize * 12;
     int dateW = tft.textWidth(prevDateBuf[0] ? prevDateBuf : dateBuf);
     int newW = tft.textWidth(dateBuf);
     int clearW = (dateW > newW) ? dateW : newW;
     const int sw = clkScrW();
-    tft.fillRect(sw / 2 - clearW / 2 - 2, LY_CLK_DATE_Y - 12, clearW + 4, 24, bg);
+    tft.fillRect(sw / 2 - clearW / 2 - 2, LY_CLK_DATE_Y - dateFontH, clearW + 4, dateFontH * 2, bg);
     tft.drawString(dateBuf, sw / 2, LY_CLK_DATE_Y);
 	strlcpy(prevDateBuf, dateBuf, sizeof(prevDateBuf));
   }

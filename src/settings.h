@@ -52,6 +52,7 @@ struct DisplaySettings {
                             // hardware revision that shows mirrored image.
   uint16_t clockTimeColor; // clock digits color (RGB565)
   uint16_t clockDateColor; // clock date/AM-PM color (RGB565)
+  bool     showBatteryIndicator; // Waveshare boards: show battery icon in status bar
   GaugeColors progress;
   GaugeColors nozzle;
   GaugeColors bed;
@@ -102,6 +103,8 @@ struct BuzzerSettings {
   uint8_t quietStartHour;   // quiet hours start (0-23), 0 = disabled
   uint8_t quietEndHour;     // quiet hours end (0-23)
   bool buttonClick;          // play click sound on button press
+  bool bedCooldownAlert;          // play second alert when bed cools after print
+  uint8_t bedCooldownThresholdC;  // bed temperature threshold (20-80 C)
 };
 
 // External LED settings (optional, PWM dimmable)
@@ -147,6 +150,7 @@ extern uint8_t buttonPin;
 extern BuzzerSettings buzzerSettings;
 extern LedSettings ledSettings;
 extern TasmotaSettings tasmotaSettings;
+extern bool dualPrinterUnsafe;
 
 void loadSettings();
 void saveSettings();
@@ -155,6 +159,7 @@ void saveRotationSettings();
 void saveButtonSettings();
 void saveBuzzerSettings();
 void saveLedSettings();
+void saveBatteryIndicatorSetting();
 void resetSettings();
 
 // Cloud token persistence (shared across printer slots)

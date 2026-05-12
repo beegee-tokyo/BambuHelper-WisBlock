@@ -96,7 +96,7 @@ static void P1S_ext_doPoll()
 
 	if (p1s_door.isNull())
 	{
-		Serial.println("[P1S sensor] Door field missing");
+		// Serial.println("[P1S sensor] Door field missing");
 		P1S_ext_markPollFailure();
 		//   return;
 	}

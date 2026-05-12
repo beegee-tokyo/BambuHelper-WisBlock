@@ -23,7 +23,7 @@ ButtonType buttonType = BTN_TOUCHSCREEN;
 ButtonType buttonType = BTN_DISABLED;
 #endif
 uint8_t buttonPin = BUTTON_DEFAULT_PIN;
-BuzzerSettings buzzerSettings = { false, BUZZER_DEFAULT_PIN, 0, 0 };
+BuzzerSettings buzzerSettings = { false, BUZZER_DEFAULT_PIN, 0, 0, false, false, 35 };
 LedSettings ledSettings = {
   /*enabled*/             false,
   /*pin*/                 LED_DEFAULT_PIN,
@@ -36,6 +36,11 @@ LedSettings ledSettings = {
   /*errorStrobe*/         false,
 };
 TasmotaSettings tasmotaSettings = { false, "", 0, 30, 255 };
+
+// Experimental: opt-in 2-printer mode on BOARD_LOW_RAM. Local-only -
+// NOT included in /settings/export to avoid propagating an unsafe mode
+// across devices via JSON backup.
+bool dualPrinterUnsafe = false;
 
 static Preferences prefs;
 
@@ -132,6 +137,7 @@ void defaultDisplaySettings(DisplaySettings& ds) {
   ds.cydPanelClassic = false;
   ds.clockTimeColor = CLR_TEXT;
   ds.clockDateColor = CLR_TEXT_DIM;
+  ds.showBatteryIndicator = true;
 
   // Progress: green arc, green label, white value
   ds.progress = { CLR_GREEN, CLR_GREEN, CLR_TEXT };
@@ -262,6 +268,7 @@ void loadSettings() {
   dispSettings.cydPanelClassic = prefs.getBool("dsp_cydcls", def.cydPanelClassic);
   dispSettings.clockTimeColor = prefs.getUShort("dsp_clkt", CLR_TEXT);
   dispSettings.clockDateColor = prefs.getUShort("dsp_clkd", CLR_TEXT_DIM);
+  dispSettings.showBatteryIndicator = prefs.getBool("dsp_bat", def.showBatteryIndicator);
 
   loadGaugeColors("gc_prg", dispSettings.progress, def.progress);
   loadGaugeColors("gc_noz", dispSettings.nozzle, def.nozzle);
@@ -345,7 +352,7 @@ void loadSettings() {
   rotState.lastRotateMs = 0;
 
   // Button settings
-#if defined(USE_CST816) || defined(USE_XPT2046) || defined(TOUCH_CS)
+#if defined(USE_CST816) || defined(USE_XPT2046) || defined(USE_FT5X06) || defined(TOUCH_CS)
   buttonType = (ButtonType)prefs.getUChar("btn_type", BTN_TOUCHSCREEN);
 #else
   buttonType = (ButtonType)prefs.getUChar("btn_type", BTN_DISABLED);
@@ -358,6 +365,10 @@ void loadSettings() {
   buzzerSettings.quietStartHour = prefs.getUChar("buz_qstart", 0);
   buzzerSettings.quietEndHour = prefs.getUChar("buz_qend", 0);
   buzzerSettings.buttonClick = prefs.getBool("buz_click", false);
+  buzzerSettings.bedCooldownAlert = prefs.getBool("buz_bed_on", false);
+  uint8_t bct = prefs.getUChar("buz_bed_c", 35);
+  if (bct < 20 || bct > 80) bct = 35;
+  buzzerSettings.bedCooldownThresholdC = bct;
 
   // External LED settings
   ledSettings.enabled    = prefs.getBool ("led_on",  false);
@@ -381,6 +392,9 @@ void loadSettings() {
   tasmotaSettings.displayMode = prefs.getUChar("tsm_dm", 0);
   tasmotaSettings.pollInterval = prefs.getUChar("tsm_pi", 10);
   tasmotaSettings.assignedSlot = prefs.getUChar("tsm_slot", 255);
+
+  // Experimental dual-printer override on BOARD_LOW_RAM (local-only, not exported)
+  dualPrinterUnsafe = prefs.getBool("dualp", false);
 
   prefs.end();
 }
@@ -412,6 +426,7 @@ void saveSettings() {
   prefs.putBool("dsp_cydcls", dispSettings.cydPanelClassic);
   prefs.putUShort("dsp_clkt", dispSettings.clockTimeColor);
   prefs.putUShort("dsp_clkd", dispSettings.clockDateColor);
+  prefs.putBool("dsp_bat", dispSettings.showBatteryIndicator);
 
   saveGaugeColors("gc_prg", dispSettings.progress);
   saveGaugeColors("gc_noz", dispSettings.nozzle);
@@ -452,6 +467,9 @@ void saveSettings() {
   prefs.putUChar("tsm_dm", tasmotaSettings.displayMode);
   prefs.putUChar("tsm_pi", tasmotaSettings.pollInterval);
   prefs.putUChar("tsm_slot", tasmotaSettings.assignedSlot);
+
+  // Experimental dual-printer override on BOARD_LOW_RAM (local-only, not exported)
+  prefs.putBool("dualp", dualPrinterUnsafe);
 
   prefs.end();
 }
@@ -515,6 +533,8 @@ void saveBuzzerSettings() {
   prefs.putUChar("buz_qstart", buzzerSettings.quietStartHour);
   prefs.putUChar("buz_qend", buzzerSettings.quietEndHour);
   prefs.putBool("buz_click", buzzerSettings.buttonClick);
+  prefs.putBool("buz_bed_on", buzzerSettings.bedCooldownAlert);
+  prefs.putUChar("buz_bed_c", buzzerSettings.bedCooldownThresholdC);
   prefs.end();
 }
 
@@ -535,6 +555,12 @@ void saveLedSettings() {
   prefs.putBool("led_auto_pr", ledSettings.autoOnWhilePrinting);
   prefs.putBool("led_pause",   ledSettings.pauseBreathing);
   prefs.putBool("led_err",     ledSettings.errorStrobe);
+  prefs.end();
+}
+
+void saveBatteryIndicatorSetting() {
+  prefs.begin(NVS_NAMESPACE, false);
+  prefs.putBool("dsp_bat", dispSettings.showBatteryIndicator);
   prefs.end();
 }
 

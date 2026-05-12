@@ -84,6 +84,7 @@ const char* pushallReasonToString(uint8_t reason) {
     case PUSHALL_RECOVERY_CONN_DEAD: return "Recovery (Conn Dead)";
     case PUSHALL_RECOVERY_FINISH:    return "Recovery (Finish)";
     case PUSHALL_RECOVERY_IDLE:      return "Recovery (Idle)";
+    case PUSHALL_RECOVERY_FAILED:    return "Recovery (Failed)";
     case PUSHALL_MANUAL:             return "Manual";
     case PUSHALL_NONE:
     default:                         return "Never";
@@ -149,8 +150,16 @@ static bool ensureClients(MqttConn& c) {
     MQTT_LOG("[%d] setServer(%s, %d) [LOCAL]", c.slotIndex, cfg.ip, BAMBU_PORT);
     c.mqtt->setServer(cfg.ip, BAMBU_PORT);
   }
-  if (!c.mqtt->setBufferSize(BAMBU_BUFFER_SIZE)) {
-    MQTT_LOG("[%d] setBufferSize(%d) FAILED — not enough heap!", c.slotIndex, BAMBU_BUFFER_SIZE);
+  // Reduce MQTT buffer when LOW_RAM user opts into experimental 2-printer mode -
+  // 40 KB per slot leaves no headroom for the second TLS handshake on CYD/C3.
+  // 16 KB is enough for typical P1/A1 pushall (~5-15 KB); X1/H2 with full AMS
+  // payload may be truncated, which is part of the "experimental" trade-off.
+  size_t bufSize = BAMBU_BUFFER_SIZE;
+#ifdef BOARD_LOW_RAM
+  if (dualPrinterUnsafe) bufSize = 16384;
+#endif
+  if (!c.mqtt->setBufferSize(bufSize)) {
+    MQTT_LOG("[%d] setBufferSize(%u) FAILED — not enough heap!", c.slotIndex, (unsigned)bufSize);
     delete c.mqtt; c.mqtt = nullptr;
     delete c.tls;  c.tls  = nullptr;
     return false;
@@ -189,6 +198,7 @@ static bool requestPushall(MqttConn& c, PushallReason reason) {
     case PUSHALL_RECOVERY_CONN_DEAD: c.diag.recoveryConnDead++; break;
     case PUSHALL_RECOVERY_FINISH:    c.diag.recoveryFinish++;   break;
     case PUSHALL_RECOVERY_IDLE:      c.diag.recoveryIdle++;     break;
+    case PUSHALL_RECOVERY_FAILED:    c.diag.recoveryFailed++;   break;
     default: break;
   }
   c.diag.lastPushallMs = c.lastPushallRequest;
@@ -205,6 +215,7 @@ static void clearLiveMetrics(BambuState& s) {
   s.layerNum = 0;      s.totalLayers = 0;
   s.coolingFanPct = 0; s.auxFanPct = 0;
   s.chamberFanPct = 0; s.heatbreakFanPct = 0;
+  s.fanGearSeen = false;
   s.speedLevel = 0;
   s.wifiSignal = 0;
   s.doorOpen = false;  s.doorSensorPresent = false;
@@ -271,6 +282,7 @@ static void parseMqttPayload(byte* payload, unsigned int length, BambuState& s, 
   pf["big_fan1_speed"] = true;
   pf["big_fan2_speed"] = true;
   pf["heatbreak_fan_speed"] = true;
+  pf["fan_gear"] = true;   // packed PWM 0-255 per fan (byte0=part, byte1=aux, byte2=chamber)
   pf["wifi_signal"] = true;
   pf["spd_lvl"] = true;
   pf["stat"] = true;  // H2 door sensor (hex string, bit 0x00800000 = door open)
@@ -706,25 +718,59 @@ static void parseMqttPayload(byte* payload, unsigned int length, BambuState& s, 
     s.totalLayers = print["total_layer_num"].as<int>();
   }
 
-  // Fan speeds (Bambu sends 0-15, may arrive as int or string)
+  // Fan speeds: prefer fan_gear (packed PWM 0-255 per fan, ~0.4% precision) over the
+  // *_fan_speed fields (4-bit 0-15, ~6.67% precision) so the displayed value matches the
+  // printer's own LCD. Fallback to the legacy fields when fan_gear is missing or the byte
+  // is 0 while the legacy field is non-zero (delta-push without fan_gear).
   auto parseFan = [](JsonVariant v) -> int {
     if (v.is<int>()) return v.as<int>();
     if (v.is<const char*>()) return atoi(v.as<const char*>());
     return -1;
   };
+  auto pwmToPct = [](uint8_t b) -> uint8_t {
+    return (uint8_t)(((uint16_t)b * 100 + 127) / 255);
+  };
 
-  int fanVal;
-  fanVal = parseFan(print["cooling_fan_speed"]);
-  if (fanVal >= 0) { corePrintData = true; s.coolingFanPct = (fanVal * 100) / 15; }
+  bool gearPresent = print["fan_gear"].is<unsigned int>() || print["fan_gear"].is<int>();
+  uint32_t gear = gearPresent ? (uint32_t)print["fan_gear"].as<unsigned int>() : 0;
+  if (gearPresent) s.fanGearSeen = true;
 
-  fanVal = parseFan(print["big_fan1_speed"]);
-  if (fanVal >= 0) { corePrintData = true; s.auxFanPct = (fanVal * 100) / 15; }
+  // Per fan: prefer fan_gear when present in this payload. If we've seen fan_gear before
+  // on this connection but it's missing from this delta-push, preserve the previous value
+  // (the *_fan_speed legacy fields are lower-precision noise that would degrade the reading).
+  // Only fall back to the legacy field when we've never seen fan_gear (old firmware/model).
+  int oldVal;
 
-  fanVal = parseFan(print["big_fan2_speed"]);
-  if (fanVal >= 0) { corePrintData = true; s.chamberFanPct = (fanVal * 100) / 15; }
+  oldVal = parseFan(print["cooling_fan_speed"]);
+  if (gearPresent) {
+    corePrintData = true; s.coolingFanPct = pwmToPct((uint8_t)(gear & 0xFF));
+  } else if (!s.fanGearSeen && oldVal >= 0) {
+    corePrintData = true; s.coolingFanPct = (oldVal * 100) / 15;
+  } else if (oldVal >= 0) {
+    corePrintData = true;  // received legacy update on a gear-supporting printer; ignore value
+  }
 
-  fanVal = parseFan(print["heatbreak_fan_speed"]);
-  if (fanVal >= 0) { corePrintData = true; s.heatbreakFanPct = (fanVal * 100) / 15; }
+  oldVal = parseFan(print["big_fan1_speed"]);
+  if (gearPresent) {
+    corePrintData = true; s.auxFanPct = pwmToPct((uint8_t)((gear >> 8) & 0xFF));
+  } else if (!s.fanGearSeen && oldVal >= 0) {
+    corePrintData = true; s.auxFanPct = (oldVal * 100) / 15;
+  } else if (oldVal >= 0) {
+    corePrintData = true;
+  }
+
+  oldVal = parseFan(print["big_fan2_speed"]);
+  if (gearPresent) {
+    corePrintData = true; s.chamberFanPct = pwmToPct((uint8_t)((gear >> 16) & 0xFF));
+  } else if (!s.fanGearSeen && oldVal >= 0) {
+    corePrintData = true; s.chamberFanPct = (oldVal * 100) / 15;
+  } else if (oldVal >= 0) {
+    corePrintData = true;
+  }
+
+  // heatbreak fan is not packed in fan_gear - keep legacy 0-15 conversion
+  oldVal = parseFan(print["heatbreak_fan_speed"]);
+  if (oldVal >= 0) { corePrintData = true; s.heatbreakFanPct = (oldVal * 100) / 15; }
 
   // Non-core fields: wifi_signal, spd_lvl, stat - don't count as core print data
   if (print["wifi_signal"].is<const char*>())
@@ -1147,6 +1193,22 @@ static void handleConn(MqttConn& c) {
         c.stalePushallSentMs = millis();
     }
 
+  // --- FAILED on cloud: cloud broker stops pushing state changes ---
+  // After a print fails, Bambu cloud goes silent: starting a new print on
+  // the printer (Studio/Handy) doesn't trigger a state push to subscribers.
+  // Send a rare recovery pushall (~5 min spacing) so the device notices a
+  // new print without the user having to open Bambu Handy to nudge cloud.
+  // Also still gated by the 2-min global throttle as belt-and-braces.
+  } else if (isConnected && cloud && s.gcodeStateId == GCODE_FAILED && connAlive) {
+    bool retryDue = (c.stalePushallSentMs == 0) ||
+                    (millis() - c.stalePushallSentMs > 300000);
+    if (retryDue && !cloudPushallThrottled) {
+      MQTT_LOG("[%d] FAILED on cloud - sending recovery pushall", c.slotIndex);
+      esp_task_wdt_reset();
+      if (requestPushall(c, PUSHALL_RECOVERY_FAILED))
+        c.stalePushallSentMs = millis();
+    }
+
   // --- Any other state ---
   } else if (s.gcodeStateId != GCODE_UNKNOWN) {
     c.stalePushallSentMs = 0;
@@ -1158,6 +1220,10 @@ static void handleConn(MqttConn& c) {
 // ---------------------------------------------------------------------------
 bool isPrinterConfigured(uint8_t slot) {
   if (slot >= MAX_PRINTERS) return false;
+#ifdef BOARD_LOW_RAM
+  // Slot 1 only available when user opts into experimental 2-printer mode.
+  if (slot > 0 && !dualPrinterUnsafe) return false;
+#endif
   PrinterConfig& cfg = printers[slot].config;
   if (isCloudMode(cfg.mode))
     return strlen(cfg.serial) > 0 && strlen(cfg.cloudUserId) > 0;
@@ -1281,7 +1347,12 @@ void requestCloudRefresh(uint8_t slot) {
   BambuState& s = printers[slot].state;
   if (!isCloudMode(cfg.mode)) return;
   if (!c.mqtt || !c.mqtt->connected()) return;
-  if (s.gcodeStateId != GCODE_UNKNOWN) return;
+  // Manual refresh is useful for states where cloud goes silent: UNKNOWN
+  // (printer just came online, no full status yet) and FAILED (after a
+  // failed print, cloud stops pushing state changes until something on the
+  // backend nudges it - e.g. opening Bambu Handy).
+  if (s.gcodeStateId != GCODE_UNKNOWN &&
+      s.gcodeStateId != GCODE_FAILED) return;
   // Debounce: at most once per 5 seconds
   static unsigned long lastRefreshMs = 0;
   if (lastRefreshMs > 0 && millis() - lastRefreshMs < 5000) return;

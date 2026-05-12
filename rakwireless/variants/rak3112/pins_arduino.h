@@ -40,8 +40,8 @@
 /*
  * Analog pins
  */
-#define PIN_A0 (21)
-#define PIN_A1 (14)
+#define PIN_A0 (1)
+#define PIN_A1 (2)
 
 /*
  * Serial interfaces

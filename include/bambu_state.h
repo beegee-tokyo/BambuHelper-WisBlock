@@ -73,6 +73,7 @@ struct BambuState {
   uint8_t auxFanPct;          // aux fan 0-100%
   uint8_t chamberFanPct;      // chamber fan 0-100%
   uint8_t heatbreakFanPct;    // heatbreak fan 0-100%
+  bool fanGearSeen;           // true once printer has reported fan_gear (gates legacy *_fan_speed fallback)
   int8_t wifiSignal;          // RSSI in dBm
   uint8_t speedLevel;         // 1=silent, 2=standard, 3=sport, 4=ludicrous
   bool dualNozzle;            // H2D/H2C dual extruder detected
@@ -83,6 +84,7 @@ struct BambuState {
   unsigned long lastPrintDataMs;  // millis() of last core print data (temps, fans, progress, state)
   bool finishBuzzerPlayed;    // true after FINISH buzzer played (reset on next print)
   bool doorAcknowledged;      // true after door opened on FINISH screen (print removed)
+  bool bedCooldownAlertArmed; // armed on FINISH transition, fired when bedTemp <= threshold
   AmsState ams;               // AMS tray data
 };
 
