@@ -209,8 +209,15 @@ static const char PAGE_HTML[] PROGMEM = R"rawliteral(
 )rawliteral"
 #ifdef BOARD_LOW_RAM
 R"rawliteral(
-      <div style="padding:10px;margin-bottom:12px;background:#0D1117;border:1px solid #30363D;border-radius:6px;font-size:12px;color:#8B949E">
-        &#9432; This board supports one printer. Use ESP32-S3 for two printers.
+      <label style="display:flex;align-items:center;gap:8px;padding:10px;margin-bottom:12px;background:#0D1117;border:1px solid #30363D;border-radius:6px;font-size:12px;color:#8B949E;cursor:pointer">
+        <input type="checkbox" id="dualp" value="1" %DUALP% onchange="toggleDualPrinterMode(this.checked)">
+        <span>Enable 2 printer mode (not supported, you may experience issues)</span>
+      </label>
+      <div id="printerTabs" style="display:%TABS_DISP%;gap:8px;margin-bottom:12px">
+        <button class="tab-btn" id="tab0" onclick="selectPrinterTab(0)"
+                style="flex:1;padding:8px;border:1px solid #30363D;border-radius:6px;background:#238636;color:#fff;cursor:pointer;font-weight:600">Printer 1</button>
+        <button class="tab-btn" id="tab1" onclick="selectPrinterTab(1)"
+                style="flex:1;padding:8px;border:1px solid #30363D;border-radius:6px;background:#0D1117;color:#8B949E;cursor:pointer">Printer 2</button>
       </div>
 )rawliteral"
 #else
@@ -243,7 +250,7 @@ R"rawliteral(
       </div>
 
       <div id="cloudFields" style="display:none">
-        <p style="font-size:12px;color:#8B949E;margin:10px 0">Connect any printer via Bambu Cloud (no LAN mode needed).<br>Token valid ~3 months. Your password is NOT stored.</p>
+        <p style="font-size:12px;color:#8B949E;margin:10px 0">Connect any printer via Bambu Cloud (no LAN mode needed).<br>Token expires after ~90 days. It may also be invalidated earlier if you "log out everywhere" or change your password - in that case paste a fresh one. Your password is NOT stored.</p>
         <label for="region">Server Region</label>
         <select id="region">
           <option value="us" %REGION_US%>Americas (US)</option>
@@ -285,11 +292,14 @@ R"rawliteral(
           <div><label style="font-size:11px;color:#8B949E">Top-center</label><select id="gs1" class="gauge-slot-sel"></select></div>
           <div><label style="font-size:11px;color:#8B949E">Top-right</label><select id="gs2" class="gauge-slot-sel"></select></div>
         </div>
-        <p style="font-size:11px;color:#58A6FF;margin-bottom:6px">&#9660; Bottom row</p>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px">
-          <div><label style="font-size:11px;color:#8B949E">Bot-left</label><select id="gs3" class="gauge-slot-sel"></select></div>
-          <div><label style="font-size:11px;color:#8B949E">Bot-center</label><select id="gs4" class="gauge-slot-sel"></select></div>
-          <div><label style="font-size:11px;color:#8B949E">Bot-right</label><select id="gs5" class="gauge-slot-sel"></select></div>
+%AMSV_ROW%
+        <div id="bottomRowGroup">
+          <p style="font-size:11px;color:#58A6FF;margin-bottom:6px">&#9660; Bottom row</p>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px">
+            <div><label style="font-size:11px;color:#8B949E">Bot-left</label><select id="gs3" class="gauge-slot-sel"></select></div>
+            <div><label style="font-size:11px;color:#8B949E">Bot-center</label><select id="gs4" class="gauge-slot-sel"></select></div>
+            <div><label style="font-size:11px;color:#8B949E">Bot-right</label><select id="gs5" class="gauge-slot-sel"></select></div>
+          </div>
         </div>
         <button type="button" style="margin-top:8px;padding:4px 10px;font-size:11px;background:transparent;color:#8B949E;border:1px solid #30363D;border-radius:4px;cursor:pointer" onclick="resetGaugeLayout()">Reset to default</button>
 
@@ -392,6 +402,10 @@ R"rawliteral(
         <div class="check-row">
           <input type="checkbox" id="shtire" value="1" %SHTIRE% onchange="toggleSetting('shtire',this.checked)">
           <label for="shtire">Show remaining time instead of ETA</label>
+        </div>
+        <div class="check-row">
+          <input type="checkbox" id="fanmp" value="1" %FMP% onchange="toggleSetting('fanmp',this.checked)">
+          <label for="fanmp">Match printer fan % (10% steps - applies on next printer update)</label>
         </div>
 %INVCOL_ROW%
 %CYD_PANEL_ROW%
@@ -552,6 +566,18 @@ R"rawliteral(
             </label>
             <p style="font-size:11px;color:#8B949E;margin-top:2px">Audible feedback for capacitive touch buttons</p>
           </div>
+          <div style="margin-top:8px">
+            <label style="display:flex;align-items:center;gap:6px;font-weight:normal;cursor:pointer">
+              <input type="checkbox" id="buzbeden" %BUZ_BED_ALERT%>
+              Sound alert when bed cools after print
+            </label>
+            <p style="font-size:11px;color:#8B949E;margin-top:2px">Plays a second sound when the bed cools below this temperature after a print.</p>
+            <div id="buzBedTempRow" style="display:flex;gap:8px;align-items:center;margin-top:4px">
+              <span style="font-size:12px;color:#8B949E">Threshold:</span>
+              <input type="number" id="buzbedtemp" min="20" max="80" value="%BUZ_BED_TEMP%" style="width:70px">
+              <span style="font-size:12px;color:#8B949E">&deg;C</span>
+            </div>
+          </div>
           <button type="button" id="buzTestBtn" class="btn btn-blue" style="margin-top:12px;width:auto;padding:8px 16px"
                   onclick="testBuzzer()">Test Finished Sound</button>
         </div>
@@ -602,6 +628,8 @@ R"rawliteral(
           </div>
         </div>
       </div>
+
+      %BAT_TOGGLE_ROW%
 
       <button type="button" class="btn btn-blue" onclick="saveRotation()">Save Hardware Settings</button>
     </div>
@@ -751,29 +779,65 @@ R"rawliteral(
   <div class="section-content" id="sec-power">
     <div class="section-body">
       <p style="font-size:12px;color:#8B949E;margin-bottom:12px">
-        Show live power consumption from a Tasmota smart plug on the display.<br>
-        Replaces or alternates with the layer counter in the bottom status bar.
+        Show live power consumption from Tasmota smart plug(s) on the display.<br>
+        Configure auto power-off and energy tariff per plug.
       </p>
-      <div class="check-row">
-        <input type="checkbox" id="tsm_en" value="1" %TSM_EN%>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end">
+        <div>
+          <label for="tsm_cur" style="margin-top:4px">Currency symbol</label>
+          <input type="text" id="tsm_cur" value="" placeholder="&euro;" maxlength="6" style="max-width:80px">
+        </div>
+        <div>
+          <label for="tsm_tar" style="margin-top:4px">Tariff per kWh</label>
+          <input type="number" id="tsm_tar" value="0" min="0" max="10" step="0.001" style="max-width:120px">
+        </div>
+      </div>
+
+      <div style="display:flex;gap:6px;margin-top:14px" id="powerTabBar">
+        <button type="button" class="power-tab-btn" onclick="selectPowerTab(0)" id="ptab0" style="flex:1;padding:8px;border:none;border-radius:6px;background:#238636;color:#fff;cursor:pointer">Plug 1</button>
+        %POWER_TAB_2%
+      </div>
+
+      <div class="check-row" style="margin-top:14px">
+        <input type="checkbox" id="tsm_en" value="1">
         <label for="tsm_en">Enable power monitoring</label>
       </div>
       <label for="tsm_ip" style="margin-top:12px">Tasmota plug IP address</label>
-      <input type="text" id="tsm_ip" value="%TSM_IP%" placeholder="192.168.1.x" maxlength="15">
+      <input type="text" id="tsm_ip" value="" placeholder="192.168.1.x" maxlength="15">
       <label style="margin-top:12px">Display mode</label>
       <div style="display:flex;flex-direction:column;gap:6px;margin-top:4px">
         <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#C9D1D9">
-          <input type="radio" name="tsm_dm" value="0" %TSM_DM0%> Alternate: layer count / watts (every 4s)
+          <input type="radio" name="tsm_dm" value="0"> Alternate: layer count / watts (every 4s)
         </label>
         <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#C9D1D9">
-          <input type="radio" name="tsm_dm" value="1" %TSM_DM1%> Always show watts
+          <input type="radio" name="tsm_dm" value="1"> Always show watts
         </label>
       </div>
-      <label for="tsm_slot" style="margin-top:12px">Assigned printer</label>
-      <select id="tsm_slot">%TSM_SLOT_OPTIONS%</select>
+      %POWER_SLOT_BLOCK%
       <label for="tsm_pi" style="margin-top:12px">Poll interval</label>
       <select id="tsm_pi">%TSM_PI_OPTIONS%</select>
-      <button type="button" class="btn btn-primary" onclick="savePower()">Save Power Settings</button>
+
+      <hr style="border:none;border-top:1px solid #30363d;margin:14px 0">
+      <div class="check-row">
+        <input type="checkbox" id="tsm_ao" value="1">
+        <label for="tsm_ao">Auto power off after print</label>
+      </div>
+      <p style="font-size:11px;color:#8B949E;margin-top:4px">
+        Powers off the plug after the print finishes <strong>and</strong> the nozzle drops below 50&nbsp;&deg;C. New prints reset the timer.
+      </p>
+      <label for="tsm_ad" style="margin-top:10px">Auto-off delay (minutes)</label>
+      <input type="number" id="tsm_ad" value="10" min="1" max="240" style="max-width:100px">
+
+      <hr style="border:none;border-top:1px solid #30363d;margin:14px 0">
+      <div style="font-size:13px;color:#C9D1D9">
+        <div style="margin-bottom:6px"><strong>Stats</strong> <span id="ptStatusDot" style="font-size:11px;color:#8B949E">(offline)</span></div>
+        <div>This print: <span id="ptThis">-</span></div>
+        <div>Today: <span id="ptToday">-</span></div>
+        <div>Total: <span id="ptTotal">-</span></div>
+        <div style="margin-top:4px">Now: <span id="ptWatts">-</span></div>
+      </div>
+
+      <button type="button" class="btn btn-primary" style="margin-top:14px" onclick="savePower()">Save Power Settings</button>
       <div id="powerStatus" role="status" aria-live="polite" aria-atomic="true" style="margin-top:8px;font-size:13px"></div>
     </div>
   </div>
@@ -852,7 +916,8 @@ var gaugeTypes=[
   'Heatbreak Fan','Clock',
   'AMS 1 Humidity','AMS 2 Humidity','AMS 3 Humidity','AMS 4 Humidity',
   'Layer Progress',
-  'AMS 1 Temp','AMS 2 Temp','AMS 3 Temp','AMS 4 Temp'
+  'AMS 1 Temp','AMS 2 Temp','AMS 3 Temp','AMS 4 Temp',
+  'AMS 1 Filament','AMS 2 Filament','AMS 3 Filament','AMS 4 Filament'
 ];
 (function(){
   var sels=document.querySelectorAll('.gauge-slot-sel');
@@ -873,6 +938,8 @@ function saveGaugeLayout(){
   var p=new URLSearchParams();
   p.append('slot',currentSlot);
   for(var g=0;g<6;g++){var s=document.getElementById('gs'+g);if(s)p.append('gs'+g,s.value);}
+  var av=document.getElementById('amsv');
+  if(av&&av.checked) p.append('amsv','1');
   fetch('/save/gaugelayout',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:p.toString()})
     .then(function(r){return r.json();})
     .then(function(d){if(d.status==='ok')showToast('Gauge layout saved!');else showToast('Error');})
@@ -881,7 +948,7 @@ function saveGaugeLayout(){
 
 // --- Multi-printer tab selection ---
 var currentSlot=0;
-setTimeout(function(){selectPrinterTab(0);},100);
+setTimeout(function(){selectPrinterTab(0);syncAmsView();},100);
 function selectPrinterTab(slot){
   currentSlot=slot;
   document.querySelectorAll('.tab-btn').forEach(function(btn,i){
@@ -901,6 +968,8 @@ function selectPrinterTab(slot){
     document.getElementById('region').value=d.region||'us';
     document.getElementById('cl_token').value='';
     if(d.gaugeSlots){for(var g=0;g<6;g++){var sel=document.getElementById('gs'+g);if(sel)sel.value=d.gaugeSlots[g]||0;}}
+    var av=document.getElementById('amsv');
+    if(av){av.checked=!!d.amsView;syncAmsView();}
     toggleConnMode();
     var ps=document.getElementById('printerStatus');
     if(d.connected){ps.className='status status-ok';ps.textContent='Connected';}
@@ -1099,7 +1168,8 @@ function ledTestEffect(){
 var buzTestSounds=[
   {id:0, name:'Print Finished'},
   {id:1, name:'Error'},
-  {id:2, name:'Connected'}
+  {id:2, name:'Connected'},
+  {id:4, name:'Bed Cooled'}
 ];
 var buzTestIdx=0;
 function testBuzzer(){
@@ -1123,6 +1193,8 @@ function saveRotation(){
   p.append('buzqs',document.getElementById('buzqs').value);
   p.append('buzqe',document.getElementById('buzqe').value);
   p.append('buzclick',document.getElementById('buzclick').checked?'1':'0');
+  p.append('buzbeden',document.getElementById('buzbeden').checked?'1':'0');
+  p.append('buzbedtemp',document.getElementById('buzbedtemp').value);
   p.append('leden',document.getElementById('leden').value);
   p.append('ledpin',document.getElementById('ledpin').value);
   p.append('ledbr',document.getElementById('ledbr').value);
@@ -1132,6 +1204,8 @@ function saveRotation(){
   p.append('ledauto', document.getElementById('ledauto').checked?'1':'0');
   p.append('ledpause',document.getElementById('ledpause').checked?'1':'0');
   p.append('lederr',  document.getElementById('lederr').checked?'1':'0');
+  var bs=document.getElementById('batshow');
+  if(bs) p.append('batshow', bs.checked?'1':'0');
   fetch('/save/rotation',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:p.toString()})
     .then(function(r){return r.json();})
     .then(function(d){if(d.status==='ok') showToast('Settings saved');})
@@ -1139,19 +1213,75 @@ function saveRotation(){
 }
 
 // --- Power monitoring ---
+var currentPowerPlug = 0;
+var powerPlugCount = (document.getElementById('ptab1') ? 2 : 1);
+
+function selectPowerTab(plug){
+  if (plug >= powerPlugCount) return;
+  currentPowerPlug = plug;
+  for (var i = 0; i < 2; i++) {
+    var btn = document.getElementById('ptab' + i);
+    if (!btn) continue;
+    btn.style.background = (i === plug) ? '#238636' : '#0D1117';
+    btn.style.color      = (i === plug) ? '#fff'    : '#8B949E';
+  }
+  fetch('/power/config?plug=' + plug).then(function(r){return r.json();}).then(function(d){
+    if (plug !== currentPowerPlug) return;
+    document.getElementById('tsm_en').checked  = !!d.enabled;
+    document.getElementById('tsm_ip').value    = d.ip || '';
+    var dm = document.querySelectorAll('input[name="tsm_dm"]');
+    for (var j = 0; j < dm.length; j++) dm[j].checked = (parseInt(dm[j].value) === (d.displayMode || 0));
+    var slotSel = document.getElementById('tsm_slot');
+    if (slotSel && typeof d.assignedSlot !== 'undefined') slotSel.value = d.assignedSlot;
+    document.getElementById('tsm_pi').value    = d.pollInterval || 10;
+    document.getElementById('tsm_ao').checked  = !!d.autoOffEnabled;
+    document.getElementById('tsm_ad').value    = d.autoOffDelayMin || 10;
+    if (typeof d.tariff === 'number') document.getElementById('tsm_tar').value = d.tariff;
+    if (typeof d.currency === 'string') document.getElementById('tsm_cur').value = d.currency;
+    refreshPowerStats();
+  }).catch(function(e){console.warn('selectPowerTab:', e);});
+}
+
+function fmtKwh(v){ return (v >= 0) ? (v.toFixed(3) + ' kWh') : '-'; }
+function fmtMoney(v, cur){ if (!(v >= 0) || !cur) return ''; return ' (' + v.toFixed(2) + ' ' + cur + ')'; }
+
+function refreshPowerStats(){
+  fetch('/power/stats').then(function(r){return r.json();}).then(function(arr){
+    if (!arr || !arr[currentPowerPlug]) return;
+    var s = arr[currentPowerPlug];
+    var cur = document.getElementById('tsm_cur').value || '';
+    var tar = parseFloat(document.getElementById('tsm_tar').value) || 0;
+    document.getElementById('ptStatusDot').textContent = s.online ? '(online)' : '(offline)';
+    document.getElementById('ptStatusDot').style.color = s.online ? '#3FB950' : '#8B949E';
+    document.getElementById('ptThis').textContent  = fmtKwh(s.thisPrint) + (s.thisPrint >= 0 ? fmtMoney(s.thisPrint * tar, cur) : '');
+    document.getElementById('ptToday').textContent = fmtKwh(s.today)     + (s.today     >= 0 ? fmtMoney(s.today     * tar, cur) : '');
+    document.getElementById('ptTotal').textContent = fmtKwh(s.total)     + (s.total     >= 0 ? fmtMoney(s.total     * tar, cur) : '');
+    document.getElementById('ptWatts').textContent = (s.online && s.watts >= 0) ? (s.watts.toFixed(0) + ' W') : '-';
+  }).catch(function(){});
+}
+setInterval(function(){ if (document.getElementById('sec-power').classList.contains('open')) refreshPowerStats(); }, 5000);
+
 function savePower(){
-  var p=new URLSearchParams();
-  if(document.getElementById('tsm_en').checked) p.append('tsm_en','1');
-  p.append('tsm_ip',document.getElementById('tsm_ip').value.trim());
-  var dm=document.querySelector('input[name="tsm_dm"]:checked');
-  if(dm) p.append('tsm_dm',dm.value);
-  p.append('tsm_slot',document.getElementById('tsm_slot').value);
-  p.append('tsm_pi',document.getElementById('tsm_pi').value);
+  var p = new URLSearchParams();
+  p.append('plug', String(currentPowerPlug));
+  p.append('tsm_en',  document.getElementById('tsm_en').checked  ? '1' : '0');
+  p.append('tsm_ip',  document.getElementById('tsm_ip').value.trim());
+  var dm = document.querySelector('input[name="tsm_dm"]:checked');
+  if (dm) p.append('tsm_dm', dm.value);
+  p.append('tsm_pi',  document.getElementById('tsm_pi').value);
+  p.append('tsm_ao',  document.getElementById('tsm_ao').checked ? '1' : '0');
+  p.append('tsm_ad',  document.getElementById('tsm_ad').value);
+  p.append('tsm_tar', document.getElementById('tsm_tar').value);
+  p.append('tsm_cur', document.getElementById('tsm_cur').value);
+  var slotSel = document.getElementById('tsm_slot');
+  if (slotSel) p.append('tsm_slot', slotSel.value);
   fetch('/save/power',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:p.toString()})
     .then(function(r){return r.json();})
     .then(function(d){if(d.status==='ok') showToast('Power settings saved');})
     .catch(function(e){showToast('Save failed');console.warn('savePower:',e);});
 }
+
+setTimeout(function(){ selectPowerTab(0); }, 150);
 
 // --- Display ---
 var themes={
@@ -1217,6 +1347,7 @@ function applyDisplay(){
   if(document.getElementById('pong').checked) p.append('pong','1');
   if(document.getElementById('slbl').checked) p.append('slbl','1');
   if(document.getElementById('shtire').checked) p.append('shtire','1');
+  if(document.getElementById('fanmp').checked) p.append('fanmp','1');
   p.append('tz',document.getElementById('tz').value);
   if(document.getElementById('use24h').checked) p.append('use24h','1');
   p.append('datefmt',document.getElementById('datefmt').value);
@@ -1241,6 +1372,20 @@ function toggleSetting(key,on){
     if(r.ok) showToast(on?key+' ON':key+' OFF');
     else showToast('Error');
   }).catch(function(e){showToast('Toggle failed');console.warn('toggleSetting:',e);});
+}
+
+function toggleDualPrinterMode(on){
+  toggleSetting('dualp',on);
+  var t=document.getElementById('printerTabs');
+  if(t) t.style.display=on?'flex':'none';
+  if(!on) selectPrinterTab(0);
+}
+
+// Hide the bottom-row gauge selectors when AMS view replaces them.
+function syncAmsView(){
+  var cb=document.getElementById('amsv');
+  var bg=document.getElementById('bottomRowGroup');
+  if(bg) bg.style.display=(cb && cb.checked)?'none':'';
 }
 
 // --- Diagnostics ---
@@ -1270,6 +1415,7 @@ function refreshDiag(){
         h+='<div class="stat-row"><span>Pushall recovery:</span><span class="stat-val">'+(rc+rd+rf+ri)+' (P:'+rc+' D:'+rd+' F:'+rf+' I:'+ri+')</span></div>';
         h+='<div class="stat-row"><span>Last pushall:</span><span class="stat-val">'+esc(p.last_pushall_reason||'Never')+' ('+ageText(p.last_pushall_age_s,p.pushall_total>0)+')</span></div>';
         if(p.last_rc!==0) h+='<div class="stat-row"><span>Last error:</span><span class="stat-val" style="color:#F85149">'+esc(p.rc_text)+'</span></div>';
+        if(p.rc_hint) h+='<div style="margin-top:4px;font-size:11px;color:#F0B72F;line-height:1.3">'+esc(p.rc_hint)+'</div>';
         h+='</div>';
       });
     }
@@ -1679,6 +1825,13 @@ static bool resolvePlaceholder(const char* name, String& out) {
     if (strcmp(name, "FMINS") == 0)        { out = String(fm); return true; }
   }
 
+  // --- Experimental dual-printer (BOARD_LOW_RAM only; placeholders are
+  //     unreferenced by HTML on other boards, but resolving them is harmless) ---
+#ifdef BOARD_LOW_RAM
+  if (strcmp(name, "DUALP") == 0)     { out = dualPrinterUnsafe ? "checked" : ""; return true; }
+  if (strcmp(name, "TABS_DISP") == 0) { out = dualPrinterUnsafe ? "flex" : "none"; return true; }
+#endif
+
   // --- Display options ---
   if (strcmp(name, "DACK") == 0)  { out = dpSettings.doorAckEnabled ? "checked" : ""; return true; }
   if (strcmp(name, "KPS") == 0)   { out = dpSettings.keepPrintScreen ? "checked" : ""; return true; }
@@ -1686,6 +1839,7 @@ static bool resolvePlaceholder(const char* name, String& out) {
   if (strcmp(name, "PONG") == 0)   { out = dispSettings.pongClock ? "checked" : ""; return true; }
   if (strcmp(name, "SLBL") == 0)   { out = dispSettings.smallLabels ? "checked" : ""; return true; }
   if (strcmp(name, "SHTIRE") == 0) { out = dispSettings.showTimeRemaining ? "checked" : ""; return true; }
+  if (strcmp(name, "FMP") == 0)    { out = dispSettings.fanMatchPrinter ? "checked" : ""; return true; }
   if (strcmp(name, "INVCOL_ROW") == 0) {
 #if defined(DISPLAY_240x320)
     out = "<div class=\"check-row\">"
@@ -1707,6 +1861,20 @@ static bool resolvePlaceholder(const char* name, String& out) {
     out += " onchange=\"toggleSetting('cydcls',this.checked)\">"
       "<label for=\"cydcls\">Use Classic CYD panel fallback "
       "(older units only - device will reboot)</label>"
+      "</div>";
+#else
+    out = "";
+#endif
+    return true;
+  }
+  if (strcmp(name, "AMSV_ROW") == 0) {
+#if !defined(DISPLAY_240x320) && !defined(DISPLAY_480x480)
+    // Initial state is populated by selectPrinterTab() from the per-slot JSON;
+    // value is saved as part of Save Gauge Layout (per-printer), not toggled globally.
+    out = "<div class=\"check-row\">"
+      "<input type=\"checkbox\" id=\"amsv\" value=\"1\""
+      " onchange=\"syncAmsView()\">"
+      "<label for=\"amsv\">AMS view (replaces bottom gauges)</label>"
       "</div>";
 #else
     out = "";
@@ -1783,6 +1951,8 @@ static bool resolvePlaceholder(const char* name, String& out) {
   if (strcmp(name, "BUZ_QS") == 0)  { out = String(buzzerSettings.quietStartHour); return true; }
   if (strcmp(name, "BUZ_QE") == 0)  { out = String(buzzerSettings.quietEndHour); return true; }
   if (strcmp(name, "BUZ_CLICK") == 0) { out = buzzerSettings.buttonClick ? "checked" : ""; return true; }
+  if (strcmp(name, "BUZ_BED_ALERT") == 0) { out = buzzerSettings.bedCooldownAlert ? "checked" : ""; return true; }
+  if (strcmp(name, "BUZ_BED_TEMP") == 0)  { out = String(buzzerSettings.bedCooldownThresholdC); return true; }
 
   // --- External LED ---
   if (strcmp(name, "LED_OFF") == 0) { out = ledSettings.enabled ? "" : "selected"; return true; }
@@ -1798,40 +1968,63 @@ static bool resolvePlaceholder(const char* name, String& out) {
   if (strcmp(name, "LED_PAUSE")     == 0) { out = ledSettings.pauseBreathing ? "checked" : ""; return true; }
   if (strcmp(name, "LED_ERR")       == 0) { out = ledSettings.errorStrobe ? "checked" : ""; return true; }
 
-  // --- Tasmota ---
-  if (strcmp(name, "TSM_EN") == 0)  { out = tasmotaSettings.enabled ? "checked" : ""; return true; }
-  if (strcmp(name, "TSM_IP") == 0)  { out = tasmotaSettings.ip; return true; }
-  if (strcmp(name, "TSM_DM0") == 0) { out = tasmotaSettings.displayMode == 0 ? "checked" : ""; return true; }
-  if (strcmp(name, "TSM_DM1") == 0) { out = tasmotaSettings.displayMode == 1 ? "checked" : ""; return true; }
-  if (strcmp(name, "TSM_SLOT_OPTIONS") == 0) {
-    out = "<option value=\"255\"";
-    if (tasmotaSettings.assignedSlot == 255) out += " selected";
-    out += ">Any printer</option>";
+  // --- Battery indicator (Waveshare boards only) ---
+  if (strcmp(name, "BAT_TOGGLE_ROW") == 0) {
+#if defined(BOARD_HAS_BATTERY)
+    out = "<div style=\"margin-top:16px;padding-top:12px;border-top:1px solid #30363D\">"
+          "<label style=\"display:flex;align-items:center;gap:8px;font-weight:normal;cursor:pointer\">"
+          "<input type=\"checkbox\" id=\"batshow\"";
+    if (dispSettings.showBatteryIndicator) out += " checked";
+    out += "> Show battery indicator</label>"
+           "<p style=\"font-size:11px;color:#8B949E;margin-top:4px\">"
+           "Hide if your board has no battery wired (avoids phantom readings).</p></div>";
+#else
+    out = "";
+#endif
+    return true;
+  }
+
+  // --- Tasmota power monitoring ---
+  // Per-plug fields are loaded by JS via GET /power/config?plug=N, so only the
+  // structural placeholders need server-side rendering.
+  if (strcmp(name, "POWER_TAB_2") == 0) {
+#if TASMOTA_PLUG_COUNT > 1
+    out = "<button type=\"button\" class=\"power-tab-btn\" onclick=\"selectPowerTab(1)\" id=\"ptab1\""
+          " style=\"flex:1;padding:8px;border:none;border-radius:6px;background:#0D1117;color:#8B949E;cursor:pointer\">Plug 2</button>";
+#else
+    out = "";
+#endif
+    return true;
+  }
+  if (strcmp(name, "POWER_SLOT_BLOCK") == 0) {
+#if TASMOTA_PLUG_COUNT == 1
+    out  = "<label for=\"tsm_slot\" style=\"margin-top:12px\">Assigned printer</label>";
+    out += "<select id=\"tsm_slot\"><option value=\"255\">Any printer</option>";
     for (uint8_t i = 0; i < MAX_ACTIVE_PRINTERS; i++) {
-      if (!isPrinterConfigured(i)) continue;
       out += "<option value=\"";
       out += String(i);
-      out += "\"";
-      if (tasmotaSettings.assignedSlot == i) out += " selected";
-      out += ">";
+      out += "\">";
       const char* nm = printers[i].config.name;
       if (nm[0] != '\0') out += nm;
       else { out += "Printer "; out += String(i + 1); }
       out += "</option>";
     }
+    out += "</select>";
+    out += "<p style=\"font-size:11px;color:#8B949E;margin-top:4px\">"
+           "When set to <em>Any printer</em>, energy stats and auto-off use Printer 1.</p>";
+#else
+    out = "";
+#endif
     return true;
   }
   if (strcmp(name, "TSM_PI_OPTIONS") == 0) {
     static const uint8_t intervals[] = {10, 15, 20, 30, 60};
     static const char* const labels[] = {"10 seconds", "15 seconds", "20 seconds", "30 seconds", "60 seconds"};
-    uint8_t cur = tasmotaSettings.pollInterval > 0 ? tasmotaSettings.pollInterval : 10;
     out = "";
     for (int i = 0; i < 5; i++) {
       out += "<option value=\"";
       out += String(intervals[i]);
-      out += "\"";
-      if (cur == intervals[i]) out += " selected";
-      out += ">";
+      out += "\">";
       out += labels[i];
       out += "</option>";
     }
@@ -1998,6 +2191,7 @@ static void readDisplayFromForm() {
   dispSettings.pongClock = server.hasArg("pong");
   dispSettings.smallLabels = server.hasArg("slbl");
   dispSettings.showTimeRemaining = server.hasArg("shtire");
+  dispSettings.fanMatchPrinter = server.hasArg("fanmp");
 
   // Clock settings (timezone, 24h)
   if (server.hasArg("tz")) {
@@ -2035,9 +2229,9 @@ static void handleSavePrinter() {
   if (slot >= MAX_ACTIVE_PRINTERS) slot = 0;
 
 #ifdef BOARD_LOW_RAM
-  if (slot > 0) {
+  if (slot > 0 && !dualPrinterUnsafe) {
     server.send(200, "application/json",
-      "{\"status\":\"error\",\"message\":\"This board supports only one printer due to RAM limits. Use ESP32-S3 for two printers.\"}");
+      "{\"status\":\"error\",\"message\":\"Enable experimental 2-printer mode in Printer Settings to configure printer 2.\"}");
     return;
   }
 #endif
@@ -2119,6 +2313,14 @@ static void handleSaveGaugeLayout() {
   if (server.hasArg("slot")) slot = server.arg("slot").toInt();
   if (slot >= MAX_ACTIVE_PRINTERS) slot = 0;
 
+#ifdef BOARD_LOW_RAM
+  if (slot > 0 && !dualPrinterUnsafe) {
+    server.send(200, "application/json",
+      "{\"status\":\"error\",\"message\":\"Enable experimental 2-printer mode to configure printer 2.\"}");
+    return;
+  }
+#endif
+
   PrinterConfig& cfg = printers[slot].config;
   for (uint8_t g = 0; g < GAUGE_SLOT_COUNT; g++) {
     char argName[8];
@@ -2128,6 +2330,7 @@ static void handleSaveGaugeLayout() {
       cfg.gaugeSlots[g] = (val < GAUGE_TYPE_COUNT) ? val : GAUGE_EMPTY;
     }
   }
+  cfg.amsView = server.hasArg("amsv");
 
   savePrinterConfig(slot);
   server.send(200, "application/json", "{\"status\":\"ok\"}");
@@ -2260,14 +2463,23 @@ static void handleDebug() {
     p["messages"] = d.messagesRx;
     p["last_rc"] = d.lastRc;
     p["rc_text"] = mqttRcToString(d.lastRc);
+    if (isCloudMode(printers[i].config.mode) &&
+        (d.lastRc == 4 || d.lastRc == 5)) {
+      p["rc_hint"] = "Token expired or invalidated (90-day TTL, or 'log out everywhere'/password change). Paste a fresh token in Setup.";
+    }
     p["tcp_ok"] = d.tcpOk;
     p["pushall_total"] = d.pushallTotal;
     p["rec_print"] = d.recoveryPrint;
     p["rec_conn_dead"] = d.recoveryConnDead;
     p["rec_finish"] = d.recoveryFinish;
     p["rec_idle"] = d.recoveryIdle;
+    p["rec_idle_hot"] = d.recoveryIdleHot;
+    p["rec_finish_hot"] = d.recoveryFinishHot;
+    p["rec_failed"] = d.recoveryFailed;
     p["last_pushall_reason"] = pushallReasonToString(d.lastPushallReason);
     p["last_pushall_age_s"] = d.lastPushallMs > 0 ? (now - d.lastPushallMs) / 1000UL : 0;
+    p["last_update_age_s"] = st.lastUpdate > 0 ? (now - st.lastUpdate) / 1000UL : 0;
+    p["last_print_data_age_s"] = st.lastPrintDataMs > 0 ? (now - st.lastPrintDataMs) / 1000UL : 0;
   }
 
   doc["heap"] = ESP.getFreeHeap();
@@ -2303,10 +2515,14 @@ static void handleToggleSetting() {
   else if (key == "pong")    dispSettings.pongClock = on;
   else if (key == "slbl")    dispSettings.smallLabels = on;
   else if (key == "shtire")  dispSettings.showTimeRemaining = on;
+  else if (key == "fanmp")   dispSettings.fanMatchPrinter = on;
   else if (key == "invcol")  dispSettings.invertColors = on;
   else if (key == "cydcls")  dispSettings.cydPanelClassic = on;
   else if (key == "nighten") dpSettings.nightModeEnabled = on;
   else if (key == "use24h")  netSettings.use24h = on;
+#ifdef BOARD_LOW_RAM
+  else if (key == "dualp")   dualPrinterUnsafe = on;
+#endif
   else {
     server.send(400, "text/plain", "Unknown key");
     return;
@@ -2316,6 +2532,16 @@ static void handleToggleSetting() {
   if (key == "invcol") applyDisplaySettings();
   if (key == "cydcls") scheduleRestart(800);  // panel swap needs a fresh init
   if (key == "use24h") { resetClock(); resetPongClock(); triggerDisplayTransition(); }
+#ifdef BOARD_LOW_RAM
+  if (key == "dualp") {
+    if (!on) {
+      // User just disabled 2-printer mode - drop slot 1 from rotation/display
+      disconnectBambuMqtt(1);
+      if (rotState.displayIndex == 1) rotState.displayIndex = 0;
+    }
+    initBambuMqtt();  // re-evaluate slot 1 active state without reboot
+  }
+#endif
   if (key == "kps") {
     BambuState& st = printers[rotState.displayIndex].state;
     ScreenState cur = getScreenState();
@@ -2354,6 +2580,7 @@ static void handlePrinterConfig() {
   doc["configured"] = isPrinterConfigured(slot);
   JsonArray slots = doc["gaugeSlots"].to<JsonArray>();
   for (uint8_t g = 0; g < GAUGE_SLOT_COUNT; g++) slots.add(cfg.gaugeSlots[g]);
+  doc["amsView"] = cfg.amsView;
 
   String json;
   serializeJson(doc, json);
@@ -2365,6 +2592,7 @@ static void handleBuzzerTest() {
   uint8_t snd = 0;
   if (server.hasArg("sound")) snd = server.arg("sound").toInt();
   if (snd <= 2) buzzerPlay((BuzzerEvent)snd);
+  else if (snd == 4) buzzerPlay(BUZZ_BED_COOLDOWN);
   server.send(200, "application/json", "{\"status\":\"ok\"}");
 }
 
@@ -2479,8 +2707,25 @@ static void handleSaveRotation() {
   if (server.hasArg("buzclick")) {
     buzzerSettings.buttonClick = (server.arg("buzclick") == "1");
   }
+  if (server.hasArg("buzbeden")) {
+    buzzerSettings.bedCooldownAlert = (server.arg("buzbeden") == "1");
+  }
+  if (server.hasArg("buzbedtemp")) {
+    int t = server.arg("buzbedtemp").toInt();
+    if (t < 20) t = 20;
+    if (t > 80) t = 80;
+    buzzerSettings.bedCooldownThresholdC = (uint8_t)t;
+  }
   saveBuzzerSettings();
   initBuzzer();
+
+  // Battery indicator visibility (Waveshare boards). Always parse so the
+  // form's unchecked state reaches NVS (browsers omit unchecked checkboxes;
+  // saveRotation() JS sends an explicit 0/1 to work around that).
+  if (server.hasArg("batshow")) {
+    dispSettings.showBatteryIndicator = (server.arg("batshow") == "1");
+    saveBatteryIndicatorSetting();
+  }
 
   // External LED — must be parsed AFTER button + buzzer so sanitizeLedPin()
   // sees the freshly-applied buttonPin and buzzerSettings.pin when checking
@@ -2521,22 +2766,89 @@ static void handleSaveRotation() {
 }
 
 // ---------------------------------------------------------------------------
-//  Save Tasmota power monitoring settings
+//  Tasmota power monitoring — config + stats + save
 // ---------------------------------------------------------------------------
-static void handleSavePower() {
-  tasmotaSettings.enabled = server.hasArg("tsm_en");
-  if (server.hasArg("tsm_ip"))
-    strlcpy(tasmotaSettings.ip, server.arg("tsm_ip").c_str(), sizeof(tasmotaSettings.ip));
-  if (server.hasArg("tsm_dm"))
-    tasmotaSettings.displayMode = server.arg("tsm_dm").toInt() ? 1 : 0;
-  if (server.hasArg("tsm_slot")) {
-    int slot = server.arg("tsm_slot").toInt();
-    tasmotaSettings.assignedSlot = (slot >= 0 && slot < MAX_ACTIVE_PRINTERS) ? (uint8_t)slot : 255;
+static void handleGetPowerConfig() {
+  int plug = server.hasArg("plug") ? server.arg("plug").toInt() : 0;
+  if (plug < 0 || plug >= TASMOTA_PLUG_COUNT) {
+    server.send(400, "application/json", "{\"status\":\"error\"}");
+    return;
   }
+  TasmotaSettings& s = tasmotaSettings[plug];
+  JsonDocument doc;
+  doc["enabled"]         = s.enabled;
+  doc["ip"]              = s.ip;
+  doc["displayMode"]     = s.displayMode;
+  doc["pollInterval"]    = s.pollInterval;
+  doc["autoOffEnabled"]  = s.autoOffEnabled;
+  doc["autoOffDelayMin"] = s.autoOffDelayMin;
+  doc["tariff"]          = tasmotaTariffPerKwh;   // global
+  doc["currency"]        = tasmotaCurrency;       // global
+#if TASMOTA_PLUG_COUNT == 1
+  doc["assignedSlot"]    = s.assignedSlot;
+#endif
+  String json;
+  serializeJson(doc, json);
+  server.send(200, "application/json", json);
+}
+
+static void handleGetPowerStats() {
+  JsonDocument doc;
+  JsonArray arr = doc.to<JsonArray>();
+  for (uint8_t i = 0; i < TASMOTA_PLUG_COUNT; i++) {
+    TasmotaPlugStatsView v;
+    tasmotaGetStats(i, &v);
+    JsonObject o = arr.add<JsonObject>();
+    o["online"]    = v.online;
+    o["watts"]     = v.watts;
+    o["today"]     = v.todayKwh;
+    o["total"]     = v.totalKwh;
+    o["thisPrint"] = v.printUsedKwh;
+  }
+  String json;
+  serializeJson(doc, json);
+  server.send(200, "application/json", json);
+}
+
+static void handleSavePower() {
+  // Currency and tariff are global - update if present regardless of plug index
+  if (server.hasArg("tsm_cur")) {
+    strlcpy(tasmotaCurrency, server.arg("tsm_cur").c_str(), sizeof(tasmotaCurrency));
+  }
+  if (server.hasArg("tsm_tar")) {
+    float t = server.arg("tsm_tar").toFloat();
+    if (t < 0.0f) t = 0.0f;
+    if (t > 10.0f) t = 10.0f;
+    tasmotaTariffPerKwh = t;
+  }
+
+  int plug = server.hasArg("plug") ? server.arg("plug").toInt() : 0;
+  if (plug < 0 || plug >= TASMOTA_PLUG_COUNT) {
+    server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Invalid plug index\"}");
+    return;
+  }
+  TasmotaSettings& s = tasmotaSettings[plug];
+
+  // Checkboxes are always submitted as 0/1 from the JS; treat "absent" as no change
+  if (server.hasArg("tsm_en"))  s.enabled = (server.arg("tsm_en").toInt() != 0);
+  if (server.hasArg("tsm_ip"))  strlcpy(s.ip, server.arg("tsm_ip").c_str(), sizeof(s.ip));
+  if (server.hasArg("tsm_dm"))  s.displayMode = server.arg("tsm_dm").toInt() ? 1 : 0;
   if (server.hasArg("tsm_pi")) {
     int pi = server.arg("tsm_pi").toInt();
-    tasmotaSettings.pollInterval = (pi >= 10 && pi <= 60) ? (uint8_t)pi : 10;
+    s.pollInterval = (pi >= 10 && pi <= 60) ? (uint8_t)pi : 10;
   }
+  if (server.hasArg("tsm_ao"))  s.autoOffEnabled = (server.arg("tsm_ao").toInt() != 0);
+  if (server.hasArg("tsm_ad")) {
+    int ad = server.arg("tsm_ad").toInt();
+    s.autoOffDelayMin = (ad >= 1 && ad <= 240) ? (uint8_t)ad : 10;
+  }
+#if TASMOTA_PLUG_COUNT == 1
+  if (server.hasArg("tsm_slot")) {
+    int slot = server.arg("tsm_slot").toInt();
+    s.assignedSlot = (slot >= 0 && slot < MAX_ACTIVE_PRINTERS) ? (uint8_t)slot : 255;
+  }
+#endif
+
   saveSettings();
   tasmotaInit();
   server.send(200, "application/json", "{\"status\":\"ok\"}");
@@ -2576,6 +2888,7 @@ static void handleSettingsExport() {
     p["region"] = (uint8_t)cfg.region;
     JsonArray slots = p["gaugeSlots"].to<JsonArray>();
     for (uint8_t g = 0; g < GAUGE_SLOT_COUNT; g++) slots.add(cfg.gaugeSlots[g]);
+    p["amsView"] = cfg.amsView;
   }
 
   // Display
@@ -2591,6 +2904,8 @@ static void handleSettingsExport() {
   disp["pongClock"] = dispSettings.pongClock;
   disp["smallLabels"] = dispSettings.smallLabels;
   disp["showTimeRemaining"] = dispSettings.showTimeRemaining;
+  disp["fanMatchPrinter"] = dispSettings.fanMatchPrinter;
+  disp["showBatteryIndicator"] = dispSettings.showBatteryIndicator;
 
   JsonObject gauges = disp["gauges"].to<JsonObject>();
   JsonObject gPrg = gauges["progress"].to<JsonObject>(); gaugeColorsToJson(gPrg, dispSettings.progress);
@@ -2643,6 +2958,8 @@ static void handleSettingsExport() {
   buz["quietStart"] = buzzerSettings.quietStartHour;
   buz["quietEnd"] = buzzerSettings.quietEndHour;
   buz["buttonClick"] = buzzerSettings.buttonClick;
+  buz["bedCooldownAlert"] = buzzerSettings.bedCooldownAlert;
+  buz["bedCooldownThresholdC"] = buzzerSettings.bedCooldownThresholdC;
 
   // External LED
   JsonObject led = doc["led"].to<JsonObject>();
@@ -2656,6 +2973,24 @@ static void handleSettingsExport() {
   led["autoOnWhilePrinting"] = ledSettings.autoOnWhilePrinting;
   led["pauseBreathing"]      = ledSettings.pauseBreathing;
   led["errorStrobe"]         = ledSettings.errorStrobe;
+
+  // Tasmota power monitoring
+  JsonObject tsm = doc["tasmota"].to<JsonObject>();
+  tsm["currency"] = tasmotaCurrency;
+  tsm["tariff"]   = tasmotaTariffPerKwh;
+  JsonArray plugs = tsm["plugs"].to<JsonArray>();
+  for (uint8_t i = 0; i < TASMOTA_PLUG_COUNT; i++) {
+    JsonObject p = plugs.add<JsonObject>();
+    p["enabled"]         = tasmotaSettings[i].enabled;
+    p["ip"]              = tasmotaSettings[i].ip;
+    p["displayMode"]     = tasmotaSettings[i].displayMode;
+    p["pollInterval"]    = tasmotaSettings[i].pollInterval;
+    p["autoOffEnabled"]  = tasmotaSettings[i].autoOffEnabled;
+    p["autoOffDelayMin"] = tasmotaSettings[i].autoOffDelayMin;
+#if TASMOTA_PLUG_COUNT == 1
+    p["assignedSlot"]    = tasmotaSettings[i].assignedSlot;
+#endif
+  }
 
   String json;
   serializeJsonPretty(doc, json);
@@ -2736,6 +3071,14 @@ static void handleSettingsImportFinish() {
   }
 
   // Printers
+  // Resolve per-printer amsView with backward compat for legacy backups: per-slot
+  // value wins; if absent, fall back to top-level display.amsView (old format);
+  // otherwise leave default. An explicit per-printer value must never be
+  // overridden by the legacy global (matters for mixed/hand-edited backups).
+  JsonObject legacyDisp = doc["display"];
+  bool legacyAmsViewPresent = legacyDisp && legacyDisp["amsView"].is<bool>();
+  bool legacyAmsView = legacyAmsViewPresent ? legacyDisp["amsView"].as<bool>() : false;
+
   JsonArray pArr = doc["printers"];
   if (pArr) {
     for (uint8_t i = 0; i < MAX_PRINTERS && i < pArr.size(); i++) {
@@ -2759,6 +3102,11 @@ static void handleSettingsImportFinish() {
           cfg.gaugeSlots[g] = (v < GAUGE_TYPE_COUNT) ? v : defSlots[g];
         }
       }
+      if (p["amsView"].is<bool>()) {
+        cfg.amsView = p["amsView"].as<bool>();
+      } else if (legacyAmsViewPresent) {
+        cfg.amsView = legacyAmsView;
+      }
     }
   }
 
@@ -2775,6 +3123,10 @@ static void handleSettingsImportFinish() {
     if (disp["pongClock"].is<bool>())           dispSettings.pongClock = disp["pongClock"].as<bool>();
     if (disp["smallLabels"].is<bool>())         dispSettings.smallLabels = disp["smallLabels"].as<bool>();
     if (disp["showTimeRemaining"].is<bool>())   dispSettings.showTimeRemaining = disp["showTimeRemaining"].as<bool>();
+    if (disp["fanMatchPrinter"].is<bool>())     dispSettings.fanMatchPrinter = disp["fanMatchPrinter"].as<bool>();
+    if (disp["showBatteryIndicator"].is<bool>()) dispSettings.showBatteryIndicator = disp["showBatteryIndicator"].as<bool>();
+    // Legacy disp["amsView"] is consumed in the printers block above as a fallback
+    // for slots that don't have their own per-printer value.
 
     JsonObject gauges = disp["gauges"];
     if (gauges) {
@@ -2852,6 +3204,11 @@ static void handleSettingsImportFinish() {
       if (qe <= 23) buzzerSettings.quietEndHour = qe;
     }
     if (buz["buttonClick"].is<bool>()) buzzerSettings.buttonClick = buz["buttonClick"].as<bool>();
+    if (buz["bedCooldownAlert"].is<bool>()) buzzerSettings.bedCooldownAlert = buz["bedCooldownAlert"].as<bool>();
+    if (buz["bedCooldownThresholdC"].is<uint8_t>()) {
+      uint8_t t = buz["bedCooldownThresholdC"].as<uint8_t>();
+      if (t >= 20 && t <= 80) buzzerSettings.bedCooldownThresholdC = t;
+    }
   }
 
   // External LED
@@ -2878,6 +3235,73 @@ static void handleSettingsImportFinish() {
     if (led["errorStrobe"].is<bool>())         ledSettings.errorStrobe         = led["errorStrobe"].as<bool>();
   }
 
+  // Tasmota power monitoring
+  // Accept new schema {"tasmota":{"currency":"€","plugs":[{...}, ...]}} and
+  // legacy schema where "tasmota" was a single object (treat as plugs[0]).
+  JsonVariant tsmRoot = doc["tasmota"];
+  if (!tsmRoot.isNull()) {
+    JsonArray plugs;
+    JsonObject tsmObj = tsmRoot.as<JsonObject>();
+    if (tsmObj && tsmObj["plugs"].is<JsonArray>()) {
+      plugs = tsmObj["plugs"];
+      if (tsmObj["currency"].is<const char*>()) {
+        strlcpy(tasmotaCurrency, tsmObj["currency"], sizeof(tasmotaCurrency));
+      }
+      if (tsmObj["tariff"].is<float>() || tsmObj["tariff"].is<double>() || tsmObj["tariff"].is<int>()) {
+        float t = tsmObj["tariff"].as<float>();
+        if (t < 0.0f) t = 0.0f;
+        if (t > 10.0f) t = 10.0f;
+        tasmotaTariffPerKwh = t;
+      } else if (plugs && plugs.size() > 0) {
+        // Back-compat: lift tariff from first plug entry if global field absent.
+        JsonObject p0 = plugs[0].as<JsonObject>();
+        if (p0["tariffPerKwh"].is<float>() || p0["tariffPerKwh"].is<double>() || p0["tariffPerKwh"].is<int>()) {
+          float t = p0["tariffPerKwh"].as<float>();
+          if (t < 0.0f) t = 0.0f;
+          if (t > 10.0f) t = 10.0f;
+          tasmotaTariffPerKwh = t;
+        }
+      }
+    }
+    // Helper lambda: apply one plug object into tasmotaSettings[idx]
+    auto applyPlug = [](uint8_t idx, JsonObject p) {
+      if (idx >= TASMOTA_PLUG_COUNT) return;
+      TasmotaSettings& s = tasmotaSettings[idx];
+      if (p["enabled"].is<bool>())          s.enabled = p["enabled"].as<bool>();
+      if (p["ip"].is<const char*>())        strlcpy(s.ip, p["ip"], sizeof(s.ip));
+      if (p["displayMode"].is<uint8_t>())   s.displayMode = p["displayMode"].as<uint8_t>() ? 1 : 0;
+      if (p["pollInterval"].is<uint8_t>()) {
+        uint8_t pi = p["pollInterval"].as<uint8_t>();
+        if (pi < 10 || pi > 60) pi = 10;
+        s.pollInterval = pi;
+      }
+      if (p["autoOffEnabled"].is<bool>())   s.autoOffEnabled = p["autoOffEnabled"].as<bool>();
+      if (p["autoOffDelayMin"].is<uint8_t>()) {
+        uint8_t ad = p["autoOffDelayMin"].as<uint8_t>();
+        if (ad < 1 || ad > 240) ad = 10;
+        s.autoOffDelayMin = ad;
+      }
+#if TASMOTA_PLUG_COUNT == 1
+      if (p["assignedSlot"].is<uint8_t>()) {
+        uint8_t a = p["assignedSlot"].as<uint8_t>();
+        if (a != 255 && a >= MAX_ACTIVE_PRINTERS) a = 255;
+        s.assignedSlot = a;
+      }
+#endif
+    };
+    if (plugs) {
+      uint8_t i = 0;
+      for (JsonObject p : plugs) {
+        if (i >= TASMOTA_PLUG_COUNT) break;
+        applyPlug(i++, p);
+      }
+    } else if (tsmObj) {
+      // Legacy "tasmota" was a single object (or new schema with no "plugs"
+      // array). Treat the object itself as plug 0.
+      applyPlug(0, tsmObj);
+    }
+  }
+
   // Save everything to NVS
   saveSettings();
   saveRotationSettings();
@@ -2902,6 +3326,12 @@ static void otaAutoTaskFn(void* param) {
   delete urlPtr;
 
   otaAutoStatus = "downloading";
+
+  // Pause IDLE0 watchdog: a sustained TLS download keeps the WiFi task on
+  // core 0 hot enough that IDLE0 can be starved past the 5 s TWDT window,
+  // especially on CYD (original ESP32 without S3's crypto accelerator).
+  // The OTA task itself runs pinned to core 1 (see handleOtaAuto).
+  disableCore0WDT();
 
   WiFiClientSecure client;
   client.setCACertBundle(rootca_crt_bundle_start);
@@ -2943,6 +3373,7 @@ static void otaAutoTaskFn(void* param) {
     }
   }
 
+  enableCore0WDT();
   otaAutoInProgress = false;
   vTaskDelete(nullptr);
 }
@@ -2966,7 +3397,10 @@ static void handleOtaAuto() {
   otaAutoStatus     = "starting";
 
   String* urlHeap = new String(url);
-  xTaskCreate(otaAutoTaskFn, "otaAuto", 8192, (void*)urlHeap, 5, nullptr);
+  // Pin to core 1: the WiFi task lives on core 0 and a concurrent TLS
+  // download here would compete for the same core, starving IDLE0 and
+  // tripping the task watchdog mid-flash on slower boards (CYD).
+  xTaskCreatePinnedToCore(otaAutoTaskFn, "otaAuto", 8192, (void*)urlHeap, 5, nullptr, 1);
 
   server.send(200, "application/json", "{\"status\":\"started\"}");
 }
@@ -3108,6 +3542,8 @@ void initWebServer() {
   server.on("/save/gaugelayout", HTTP_POST, handleSaveGaugeLayout);
   server.on("/save/rotation", HTTP_POST, handleSaveRotation);
   server.on("/save/power", HTTP_POST, handleSavePower);
+  server.on("/power/config", HTTP_GET, handleGetPowerConfig);
+  server.on("/power/stats",  HTTP_GET, handleGetPowerStats);
   server.on("/buzzer/test", HTTP_POST, handleBuzzerTest);
   server.on("/led/preview", HTTP_POST, handleLedPreview);
   server.on("/led/test",    HTTP_POST, handleLedTest);

@@ -10,6 +10,7 @@
 #include "buzzer.h"
 #include "led.h"
 #include "tasmota.h"
+#include "battery.h"
 #include <esp_sleep.h>
 #include <driver/gpio.h>
 
@@ -28,6 +29,7 @@ static unsigned long boardShutdownHoldStart = 0;
 static bool lastBoardBtn = false;
 static bool boardBtnStable = false;
 static unsigned long boardBtnChangeMs = 0;
+static unsigned long boardBtnPressStartMs = 0;
 #endif
 
 static bool anyPrinterPrinting() {
@@ -50,11 +52,6 @@ static bool anyPrinterDrying() {
 
 static bool isSleepStickyScreen(ScreenState state) {
   return state == SCREEN_CLOCK || state == SCREEN_OFF;
-}
-
-static bool isDisplayedPrinterAssignedToTasmota() {
-  return tasmotaSettings.assignedSlot == 255 ||
-         tasmotaSettings.assignedSlot == rotState.displayIndex;
 }
 
 static void transitionToClockOrOff() {
@@ -111,7 +108,12 @@ static bool wasBoardButtonPressed() {
   }
   if ((millis() - boardBtnChangeMs) < 50) return false;
   bool result = false;
-  if (raw && !boardBtnStable) result = true;
+  if (raw && !boardBtnStable) {
+    result = true;
+    boardBtnPressStartMs = millis();
+  } else if (!raw && boardBtnStable) {
+    boardBtnPressStartMs = 0;
+  }
   boardBtnStable = raw;
   return result;
 #else
@@ -119,23 +121,44 @@ static bool wasBoardButtonPressed() {
 #endif
 }
 
-static void handleWakeButton() {
-  if (!wasButtonPressed() && !wasBoardButtonPressed()) return;
+static bool isBoardButtonHeld() {
+#if defined(BOARD_BTN_1)
+  return boardBtnStable;
+#else
+  return false;
+#endif
+}
 
-  // Handle physical button press before MQTT so screen wakes instantly
-  // without waiting for a potentially blocking TLS reconnect.
-  buzzerPlayClick();
-  ledOnUserInteraction();  // any user input cancels finish LED effect
+static uint32_t boardButtonHoldDurationMs() {
+#if defined(BOARD_BTN_1)
+  if (!boardBtnStable || boardBtnPressStartMs == 0) return 0;
+  return (uint32_t)(millis() - boardBtnPressStartMs);
+#else
+  return 0;
+#endif
+}
+
+static bool isBoardButton3Held() {
+#if defined(BOARD_BTN_3)
+  return digitalRead(BOARD_BTN_3) == LOW;
+#else
+  return false;
+#endif
+}
+
+// Existing on-press behavior, factored out so it can be invoked either on
+// press-edge (LED disabled path: unchanged behavior) or on release-edge
+// (LED enabled path: deferred until tap/hold disambiguation completes).
+static void doTapActions() {
   ScreenState cur = getScreenState();
 
   if (isSleepStickyScreen(cur)) {
-    // Wake from sleep + reset backoff for immediate reconnect
     setBacklight(getEffectiveBrightness());
     finishActive = false;
     idleClockActive = false;
     resetMqttBackoff();
-    deferMqttReconnect();  // skip blocking reconnect this iteration so screen wakes instantly
-    setScreenState(SCREEN_IDLE);  // state machine will correct on next loop
+    deferMqttReconnect();
+    setScreenState(SCREEN_IDLE);
     return;
   }
 
@@ -144,11 +167,58 @@ static void handleWakeButton() {
     return;
   }
 
-  if (cur == SCREEN_IDLE &&
-      isCloudMode(displayedPrinter().config.mode) &&
-      displayedPrinter().state.gcodeStateId == GCODE_UNKNOWN) {
-    // Single printer, cloud, UNKNOWN - manual refresh
+  if (isCloudMode(displayedPrinter().config.mode) &&
+      !displayedPrinter().state.printing) {
     requestCloudRefresh(rotState.displayIndex);
+  }
+}
+
+static void handleWakeButton() {
+  // Both edge pollers MUST be called every loop unconditionally - each owns its
+  // own debounce + held-state machine, and skipping a call would freeze it.
+  bool touchPress = wasButtonPressed();
+  bool boardPress = wasBoardButtonPressed();
+
+  bool held = isButtonHeld() || isBoardButtonHeld();
+  uint32_t touchHoldMs = buttonHoldDurationMs();
+  uint32_t boardHoldMs = boardButtonHoldDurationMs();
+  uint32_t holdMs = (touchHoldMs > boardHoldMs) ? touchHoldMs : boardHoldMs;
+  bool suppressDim = isBoardButton3Held();
+
+  // Tick the dimmer every loop regardless of state - it owns the 2 s save debounce.
+  bool holdConsumed = ledHoldDimUpdate(held, holdMs, suppressDim);
+
+  // LED disabled or unconfigured: take the ORIGINAL press-edge path, bit-for-bit
+  // identical to pre-feature behavior. The dimmer's entry guard prevents any
+  // new dim session from starting, so holdConsumed is always false here.
+  if (!ledSettings.enabled) {
+    if (touchPress || boardPress) {
+      buzzerPlayClick();
+      ledOnUserInteraction();
+      doTapActions();
+    }
+    return;
+  }
+
+  // LED enabled: tap/hold disambiguation.
+  static bool wasHeldPrev = false;
+  static bool holdConsumedThisPress = false;
+
+  if (touchPress || boardPress) {
+    // Press edge - immediate feedback (preserves today's snappy feel).
+    buzzerPlayClick();
+    ledOnUserInteraction();
+    holdConsumedThisPress = false;
+  }
+
+  if (holdConsumed) holdConsumedThisPress = true;
+
+  bool releaseEdge = (wasHeldPrev && !held);
+  wasHeldPrev = held;
+
+  if (releaseEdge && !holdConsumedThisPress) {
+    // Was a tap - fire deferred actions (sub-100 ms perceived delay).
+    doTapActions();
   }
 }
 
@@ -195,9 +265,6 @@ static void handleDisplayedPrinterFinishState(ScreenState current, BambuState& s
   if (current != SCREEN_FINISHED && !isSleepStickyScreen(current) &&
       !(current == SCREEN_IDLE && s.ams.anyDrying) &&
       !(current == SCREEN_PRINTING && finishActive)) {
-    if (tasmotaSettings.enabled && isDisplayedPrinterAssignedToTasmota()) {
-      tasmotaMarkPrintEnd();
-    }
     setScreenState(dpSettings.keepPrintScreen ? SCREEN_PRINTING : SCREEN_FINISHED);
     finishScreenStart = millis();
     finishActive = true;
@@ -245,10 +312,10 @@ static void handleDisplayedPrinterConnectedState(ScreenState current, BambuState
   if (s.printing) {
     if (current != SCREEN_PRINTING) {
       setScreenState(SCREEN_PRINTING);
+    }
+    if (finishActive) {
       finishActive = false;
-      if (isDisplayedPrinterAssignedToTasmota()) {
-        tasmotaMarkPrintStart();
-      }
+      idleClockActive = false;
     }
     s.finishBuzzerPlayed = false;  // reset for next finish event
     s.doorAcknowledged = false;    // reset door ack for next finish
@@ -374,18 +441,84 @@ static void handleConnectingScreenRecovery() {
   }
 }
 
-static void handleErrorBuzzers() {
-  // Check for error state transition on any printer
+static void handleGcodeStateTransitions() {
+  // Per-slot transition tracking. All transition checks must happen BEFORE
+  // updating prevGcodeStateId[i] at the end - so a single combined helper
+  // is the only safe way to handle multiple transition-driven behaviors.
   for (uint8_t i = 0; i < MAX_ACTIVE_PRINTERS; i++) {
     if (!isPrinterConfigured(i)) continue;
     BambuState& ps = printers[i].state;
-    if (ps.gcodeStateId == GCODE_FAILED &&
-        prevGcodeStateId[i] != GCODE_FAILED &&
-        prevGcodeStateSeen[i]) {
-      buzzerPlay(BUZZ_ERROR);
+
+    if (prevGcodeStateSeen[i]) {
+      if (ps.gcodeStateId == GCODE_FAILED && prevGcodeStateId[i] != GCODE_FAILED) {
+        buzzerPlay(BUZZ_ERROR);
+      }
+      if (ps.gcodeStateId == GCODE_FINISH && prevGcodeStateId[i] != GCODE_FINISH) {
+        if (buzzerSettings.bedCooldownAlert) {
+          ps.bedCooldownAlertArmed = true;
+        }
+      }
+      if (isPrintingGcodeState(ps.gcodeStateId) &&
+          !isPrintingGcodeState(prevGcodeStateId[i])) {
+        ps.bedCooldownAlertArmed = false;
+      }
+
+      // Per-slot Tasmota print start/end edges — independent of which printer
+      // is on screen, so dual-plug stats stay accurate even when displaying
+      // the other printer.
+      uint8_t plug = tasmotaPlugForPrinterSlot(i);
+      if (plug != 0xFF) {
+        bool wasPrinting = isPrintingGcodeState(prevGcodeStateId[i]);
+        bool isPrinting  = isPrintingGcodeState(ps.gcodeStateId);
+        if (isPrinting && !wasPrinting) {
+          tasmotaMarkPrintStart(plug);
+        }
+        if (ps.gcodeStateId == GCODE_FINISH && prevGcodeStateId[i] != GCODE_FINISH) {
+          tasmotaMarkPrintEnd(plug);
+        }
+      }
     }
     prevGcodeStateId[i] = ps.gcodeStateId;
     prevGcodeStateSeen[i] = true;
+  }
+}
+
+static void handleBedCooldownBuzzers() {
+  // Option disabled - clear all armed flags so re-enabling later doesn't
+  // fire a stale alert (e.g. user toggles off, bed cools below threshold,
+  // user toggles back on -> would otherwise trigger immediately).
+  if (!buzzerSettings.bedCooldownAlert) {
+    for (uint8_t i = 0; i < MAX_ACTIVE_PRINTERS; i++) {
+      printers[i].state.bedCooldownAlertArmed = false;
+    }
+    return;
+  }
+  if (buzzerIsPlaying()) return;  // wait for finish melody to clear
+
+  for (uint8_t i = 0; i < MAX_ACTIVE_PRINTERS; i++) {
+    if (!isPrinterConfigured(i)) continue;
+    BambuState& ps = printers[i].state;
+    if (!ps.bedCooldownAlertArmed) continue;
+    if (!ps.connected) continue;
+
+    // Door-open ack per slot: user came to grab the print, cancel pending alert.
+    if (dpSettings.doorAckEnabled && ps.doorSensorPresent && ps.doorOpen) {
+      ps.bedCooldownAlertArmed = false;
+      continue;
+    }
+
+    // Defensive: a new print is running, kill the armed state.
+    if (isPrintingGcodeState(ps.gcodeStateId)) {
+      ps.bedCooldownAlertArmed = false;
+      continue;
+    }
+
+    if (ps.bedTemp <= 0.5f) continue;  // MQTT data sanity
+    if (ps.bedTemp > (float)buzzerSettings.bedCooldownThresholdC) continue;
+
+    buzzerPlay(BUZZ_BED_COOLDOWN);
+    ps.bedCooldownAlertArmed = false;  // fire-and-forget (quiet hours = silent skip)
+    break;  // one alert per loop tick
   }
 }
 
@@ -479,6 +612,7 @@ void setup() {
 
   loadSettings();
   initDisplay();
+  Battery::begin();
   splashEnd = millis() + 2000;
   startWiFiDuringSplash();
   setBacklight(brightness);
@@ -498,16 +632,20 @@ void loop() {
 
   handleDisplaySleepTimeouts();
   handleConnectingScreenRecovery();
-  handleErrorBuzzers();
+  handleGcodeStateTransitions();
+  handleBedCooldownBuzzers();
 
   buzzerTick();
+  Battery::tick();
   ledTick();
   checkNightMode();
   updateDisplay();
 
   // MQTT and rotation after display update - TLS reconnect can block for
-  // several seconds so we handle it last to keep UI responsive
-  if (isWiFiConnected() && !isAPMode() && isAnyPrinterConfigured()) {
+  // several seconds so we handle it last to keep UI responsive.
+  // Skip during auto-OTA: that path already holds a TLS session to GitHub
+  // and a concurrent second TLS session to Bambu Cloud is unsupported.
+  if (isWiFiConnected() && !isAPMode() && isAnyPrinterConfigured() && !isOtaAutoInProgress()) {
     handleBambuMqtt();
     handleRotation();
   }

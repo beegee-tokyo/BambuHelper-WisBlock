@@ -25,6 +25,10 @@ enum GaugeType : uint8_t {
   GAUGE_AMS_TEMP_2  = 16,  // AMS unit 2 temperature
   GAUGE_AMS_TEMP_3  = 17,  // AMS unit 3 temperature
   GAUGE_AMS_TEMP_4  = 18,  // AMS unit 4 temperature
+  GAUGE_AMS_FILAMENT_1 = 19,    // AMS unit 1 - all 4 trays + humidity
+  GAUGE_AMS_FILAMENT_2 = 20,    // AMS unit 2 - all 4 trays + humidity
+  GAUGE_AMS_FILAMENT_3 = 21,    // AMS unit 3 - all 4 trays + humidity
+  GAUGE_AMS_FILAMENT_4 = 22,    // AMS unit 4 - all 4 trays + humidity
   GAUGE_TYPE_COUNT  // sentinel - always last
 };
 
@@ -46,12 +50,14 @@ struct DisplaySettings {
   bool     pongClock;         // Pong/Breakout animated clock
   bool     smallLabels;       // use smaller gauge labels (Font 1 instead of Font 2)
   bool     showTimeRemaining; // always show time remaining instead of ETA
+  bool     fanMatchPrinter;   // round fan % to 10% steps to match printer LCD (else 1% precision from fan_gear)
   bool     invertColors;   // invert display colors (fixes white-bg on some panels)
   bool     cydPanelClassic; // CYD only: use plain Panel_ILI9341 (no inversion)
                             // instead of Panel_ILI9341_2 — for the other
                             // hardware revision that shows mirrored image.
   uint16_t clockTimeColor; // clock digits color (RGB565)
   uint16_t clockDateColor; // clock date/AM-PM color (RGB565)
+  bool     showBatteryIndicator; // Waveshare boards: show battery icon in status bar
   GaugeColors progress;
   GaugeColors nozzle;
   GaugeColors bed;
@@ -102,6 +108,8 @@ struct BuzzerSettings {
   uint8_t quietStartHour;   // quiet hours start (0-23), 0 = disabled
   uint8_t quietEndHour;     // quiet hours end (0-23)
   bool buttonClick;          // play click sound on button press
+  bool bedCooldownAlert;          // play second alert when bed cools after print
+  uint8_t bedCooldownThresholdC;  // bed temperature threshold (20-80 C)
 };
 
 // External LED settings (optional, PWM dimmable)
@@ -128,12 +136,23 @@ struct LedSettings {
 };
 
 // Tasmota smart plug power monitoring
+// Dual plug on full-RAM builds, single plug on BOARD_LOW_RAM (CYD/tzt_2432/esp32c3).
+#ifdef BOARD_LOW_RAM
+  #define TASMOTA_PLUG_COUNT 1
+#else
+  #define TASMOTA_PLUG_COUNT 2
+#endif
+
 struct TasmotaSettings {
   bool    enabled;
   char    ip[16];
-  uint8_t displayMode;   // 0=alternate layers/power every 4s, 1=always show power
-  uint8_t pollInterval;  // poll interval in seconds (10-30)
-  uint8_t assignedSlot;  // printer slot this plug belongs to (0, 1, ... or 255=any)
+  uint8_t displayMode;       // 0=alternate layers/power every 4s, 1=always show power
+  uint8_t pollInterval;      // poll interval in seconds (10-60)
+#if TASMOTA_PLUG_COUNT == 1
+  uint8_t assignedSlot;      // single-plug builds: which printer slot (0, 1, ... or 255=any)
+#endif
+  bool    autoOffEnabled;    // power off plug N minutes after FINISH and cooldown
+  uint8_t autoOffDelayMin;   // minutes after FINISH (1-240)
 };
 
 extern char wifiSSID[33];
@@ -146,7 +165,10 @@ extern ButtonType buttonType;
 extern uint8_t buttonPin;
 extern BuzzerSettings buzzerSettings;
 extern LedSettings ledSettings;
-extern TasmotaSettings tasmotaSettings;
+extern TasmotaSettings tasmotaSettings[TASMOTA_PLUG_COUNT];
+extern char  tasmotaCurrency[8];      // e.g. "€", "$", "zł"
+extern float tasmotaTariffPerKwh;     // global tariff (same for all plugs)
+extern bool dualPrinterUnsafe;
 
 void loadSettings();
 void saveSettings();
@@ -155,6 +177,7 @@ void saveRotationSettings();
 void saveButtonSettings();
 void saveBuzzerSettings();
 void saveLedSettings();
+void saveBatteryIndicatorSetting();
 void resetSettings();
 
 // Cloud token persistence (shared across printer slots)

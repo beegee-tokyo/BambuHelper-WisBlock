@@ -5,10 +5,12 @@ Create BambuHelper release firmware files.
 Usage:
     python merge_bins.py                    # auto-reads version, builds esp32s3
     python merge_bins.py --board cyd        # build CYD firmware
+    python merge_bins.py --board tzt_2432   # build TZT L1435-2.4 firmware
     python merge_bins.py --board esp32c3    # build ESP32-C3 firmware
+    python merge_bins.py --board esp32s3_zero  # build Waveshare ESP32-S3-Zero firmware
     python merge_bins.py --board ws_lcd_200 # build Waveshare 2.0 firmware
     python merge_bins.py --board ws_lcd_154 # build Waveshare 1.54 firmware
-    python merge_bins.py --all              # build all 5 board variants
+    python merge_bins.py --all              # build all board variants
     python merge_bins.py v2.5               # override version
     python merge_bins.py --ota              # OTA binary only
     python merge_bins.py --full             # Full (WebFlasher) binary only
@@ -16,8 +18,12 @@ Usage:
 Output:
     firmware/v2.5/BambuHelper-esp32s3-v2.5-Full.bin
     firmware/v2.5/BambuHelper-esp32s3-v2.5-ota.bin
+    firmware/v2.5/BambuHelper-esp32s3_zero-v2.5-Full.bin
+    firmware/v2.5/BambuHelper-esp32s3_zero-v2.5-ota.bin
     firmware/v2.5/BambuHelper-cyd-v2.5-Full.bin
     firmware/v2.5/BambuHelper-cyd-v2.5-ota.bin
+    firmware/v2.5/BambuHelper-tzt_2432-v2.5-Full.bin
+    firmware/v2.5/BambuHelper-tzt_2432-v2.5-ota.bin
     firmware/v2.5/BambuHelper-ws_lcd_200-v2.5-Full.bin
     firmware/v2.5/BambuHelper-ws_lcd_200-v2.5-ota.bin
     firmware/v2.5/BambuHelper-ws_lcd_154-v2.5-Full.bin
@@ -41,6 +47,14 @@ BOARDS = {
         'build_env': 'esp32s3',
         'board_id': 'esp32s3',
     },
+    'esp32s3_zero': {
+        'build_dir': '.pio/build/esp32s3_zero',
+        'bootloader_offset': 0x0,       # ESP32-S3 starts at 0x0
+        'partitions_offset': 0x8000,
+        'firmware_offset': 0x10000,
+        'build_env': 'esp32s3_zero',
+        'board_id': 'esp32s3_zero',
+    },
     'cyd': {
         'build_dir': '.pio/build/cyd',
         'bootloader_offset': 0x1000,    # Standard ESP32 starts at 0x1000
@@ -48,6 +62,14 @@ BOARDS = {
         'firmware_offset': 0x10000,
         'build_env': 'cyd',
         'board_id': 'cyd',
+    },
+    'tzt_2432': {
+        'build_dir': '.pio/build/tzt_2432',
+        'bootloader_offset': 0x1000,    # Standard ESP32 starts at 0x1000
+        'partitions_offset': 0x8000,
+        'firmware_offset': 0x10000,
+        'build_env': 'tzt_2432',
+        'board_id': 'tzt_2432',
     },
     'ws_lcd_200': {
         'build_dir': '.pio/build/ws_lcd_200',
@@ -78,7 +100,12 @@ BOARDS = {
 BOARD_ALIASES = {
     's3': 'esp32s3',
     'esp32s3': 'esp32s3',
+    's3zero': 'esp32s3_zero',
+    's3_zero': 'esp32s3_zero',
+    'esp32s3_zero': 'esp32s3_zero',
     'cyd': 'cyd',
+    'tzt': 'tzt_2432',
+    'tzt_2432': 'tzt_2432',
     'ws': 'ws_lcd_200',
     'ws_lcd_200': 'ws_lcd_200',
     'ws154': 'ws_lcd_154',

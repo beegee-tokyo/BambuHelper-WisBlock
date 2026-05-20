@@ -28,6 +28,21 @@ static unsigned long lastTickMs           = 0;
 static bool          previewActive        = false;
 static uint8_t       previewBrightness    = 0;
 
+// ---------------------------------------------------------------------------
+//  Hold-to-dim state machine (driven by ledHoldDimUpdate from handleWakeButton)
+// ---------------------------------------------------------------------------
+static const uint32_t HOLD_THRESHOLD_MS       = 300;
+static const uint32_t DIM_STEP_INTERVAL_MS    = 20;
+static const uint8_t  DIM_STEP                = 3;
+static const uint8_t  LED_MIN_BRIGHTNESS_DIM  = 10;
+static const uint32_t LED_SAVE_DEBOUNCE_MS    = 2000;
+
+static enum { DIM_IDLE, DIM_ACTIVE } dimState = DIM_IDLE;
+static int8_t   dimDirection   = +1;
+static uint32_t dimLastStepMs  = 0;
+static uint32_t dimSaveAtMs    = 0;
+static uint8_t  dimWorkingDuty = 0;
+
 static inline uint8_t restingBrightness() {
   return previewActive ? previewBrightness : ledSettings.brightness;
 }
@@ -43,8 +58,8 @@ bool isLedPinAllowed(uint8_t pin) {
   if (buzzerSettings.enabled && pin == buzzerSettings.pin) return false;
   if (buttonType != BTN_DISABLED && pin == buttonPin) return false;
 
-#if defined(DISPLAY_CYD)
-  // CYD (classic ESP32, esp32dev)
+#if defined(DISPLAY_CYD) || defined(BOARD_IS_TZT_2432)
+  // CYD (ESP32-2432S028) and TZT L1435-2.4 - same ESP32 pinout, both esp32dev
   if (pin == 2 || pin == 12 || pin == 13 || pin == 14 || pin == 15) return false;  // display SPI
   if (pin == 25 || pin == 32 || pin == 33 || pin == 36 || pin == 39) return false; // XPT2046 touch
   if (pin == 4 || pin == 16 || pin == 17) return false;                            // onboard RGB
@@ -52,6 +67,15 @@ bool isLedPinAllowed(uint8_t pin) {
   if (pin >= 6 && pin <= 11) return false;                                         // SPI flash
   if (pin >= 34 && pin <= 39) return false;                                        // input-only
   if (pin > 39) return false;
+
+#elif defined(BOARD_IS_S3_ZERO)
+  // Waveshare ESP32-S3-Zero + external ST7789 240x240
+  if (pin == 8 || pin == 9 || pin == 10 || pin == 11 || pin == 12) return false;  // display SPI
+  if (pin == 13) return false;                                                     // display backlight
+  if (pin == 19 || pin == 20) return false;                                        // USB CDC D-/D+
+  if (pin == 21) return false;                                                     // onboard WS2812 RGB LED
+  if (pin >= 26 && pin <= 37) return false;                                        // SPI flash + PSRAM / not exposed
+  if (pin > 48) return false;
 
 #elif defined(BOARD_IS_S3)
   // LOLIN S3 mini + ST7789 240x240
@@ -86,6 +110,25 @@ bool isLedPinAllowed(uint8_t pin) {
   if (pin == 18 || pin == 19) return false;                                        // USB CDC D-/D+
   if (pin >= 11 && pin <= 17) return false;                                        // flash/PSRAM
   if (pin > 21) return false;
+
+#elif defined(BOARD_IS_SENSECAP)
+  // SenseCAP Indicator (ESP32-S3 + ST7701S 480x480 RGB)
+  // RGB565 data pins: D0-D15 = GPIOs 15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0
+  // RGB control: PCLK=21, VSYNC=17, HSYNC=16, DE=18
+  if (pin <= 21) return false;                                   // All RGB data + control pins (0-21)
+  // SPI for display init
+  if (pin == 41 || pin == 48) return false;                      // SPI CLK, MOSI
+  // I2C (shared by touch FT5X06 and PCA9535PW)
+  if (pin == 39 || pin == 40) return false;                      // I2C SDA, SCL
+  // Peripherals
+  if (pin == 45) return false;                                   // backlight PWM
+  if (pin == 38) return false;                                   // user button
+  if (pin == 19 || pin == 20) return false;                                        // UART0 to RP2040 (buzzer is on RP2040 GPIO 19, not ESP32-S3 GPIO 19)
+  // SPI flash + PSRAM (opi_qspi)
+  if (pin >= 26 && pin <= 37) return false;
+  // MISO not used but on SPI bus
+  if (pin == 47) return false;
+  if (pin > 48) return false;
 #endif
 
   return true;
@@ -292,6 +335,11 @@ void ledTick() {
   if (!ledSettings.enabled && !previewActive) return;
   if (attachedPin < 0) return;
 
+  // Hold-to-dim owns the duty while active - skip the normal priority stack so
+  // strobe / breath / auto-on don't fight the ramp. Aborts always clear the
+  // state machine back to DIM_IDLE, so this early-return can't get stuck.
+  if (dimState == DIM_ACTIVE) return;
+
   unsigned long now = millis();
   if (now - lastTickMs < LED_TICK_MIN_INTERVAL_MS) return;
   lastTickMs = now;
@@ -333,4 +381,63 @@ void ledTick() {
   }
 
   writeDuty(duty);
+}
+
+// ---------------------------------------------------------------------------
+//  Hold-to-dim
+// ---------------------------------------------------------------------------
+bool ledHoldDimUpdate(bool heldNow, uint32_t holdMs, bool suppressDim) {
+  uint32_t now = millis();
+
+  // Drain a pending save regardless of state. saveLedSettings() runs even if
+  // ledSettings.enabled was toggled off after the dim - it persists the current
+  // RAM state, which is what the user just configured.
+  if (dimState == DIM_IDLE && dimSaveAtMs != 0 && (int32_t)(now - dimSaveAtMs) >= 0) {
+    saveLedSettings();
+    dimSaveAtMs = 0;
+  }
+
+  if (dimState == DIM_ACTIVE) {
+    bool mustAbort = !heldNow || suppressDim || !ledSettings.enabled ||
+                     attachedPin < 0 || previewActive;
+
+    if (mustAbort) {
+      if (!heldNow) {
+        // Clean release: flip direction, schedule save.
+        dimDirection = -dimDirection;
+        dimSaveAtMs = now + LED_SAVE_DEBOUNCE_MS;
+        if (dimSaveAtMs == 0) dimSaveAtMs = 1;  // 0 sentinel: never zero accidentally
+      }
+      // Forced abort path keeps the in-RAM brightness change but skips the save
+      // and the direction flip - the user didn't get a deliberate dim session.
+      dimState = DIM_IDLE;
+      return true;  // press was consumed by hold, still suppress tap actions
+    }
+
+    if ((int32_t)(now - dimLastStepMs) >= (int32_t)DIM_STEP_INTERVAL_MS) {
+      int next = (int)dimWorkingDuty + (int)dimDirection * (int)DIM_STEP;
+      if (next < (int)LED_MIN_BRIGHTNESS_DIM) next = LED_MIN_BRIGHTNESS_DIM;
+      if (next > 255) next = 255;
+      dimWorkingDuty = (uint8_t)next;
+      applyLedDuty(dimWorkingDuty);
+      ledSettings.brightness = dimWorkingDuty;
+      dimLastStepMs = now;
+    }
+    return true;
+  }
+
+  // DIM_IDLE entry guard - only start a new session if every precondition holds.
+  if (heldNow && !suppressDim && ledSettings.enabled && attachedPin >= 0 &&
+      !previewActive && holdMs >= HOLD_THRESHOLD_MS) {
+    dimSaveAtMs = 0;
+    int seed = (lastWrittenDuty >= 0) ? lastWrittenDuty : (int)ledSettings.brightness;
+    if (seed < (int)LED_MIN_BRIGHTNESS_DIM) seed = LED_MIN_BRIGHTNESS_DIM;
+    if (seed > 255) seed = 255;
+    dimWorkingDuty = (uint8_t)seed;
+    dimLastStepMs = now;
+    dimState = DIM_ACTIVE;
+    return true;
+  }
+
+  return false;
 }

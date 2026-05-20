@@ -4,7 +4,7 @@
 // =============================================================================
 //  Firmware version
 // =============================================================================
-#define FW_VERSION          "v2.9.1"
+#define FW_VERSION          "v3.2.1"
 
 // Board variant — injected into the web UI for OTA asset filtering.
 // Normally set via build_flags in platformio.ini; this is a fallback.
@@ -79,6 +79,15 @@
 #define WIFI_STA_PROBE_CHECK_MS    10000  // 10s after probe start before checking result
 #define WIFI_AP_FALLBACK_MS       900000  // 15 min in phase 3 before falling back to AP
 
+// Improv WiFi serial setup window on first boot (no stored credentials).
+// During this window the device listens for Improv commands from the web
+// flasher; on timeout it falls back to the AP captive portal.
+// 3 minutes is generous on purpose: ESP Web Tools needs ~15s to probe after
+// flash, then the user has to find their SSID, fetch the password from a
+// router sticker / password manager, and type it in. Anything shorter
+// punishes slow users with a "you missed the dialog" cliff.
+#define IMPROV_SETUP_WINDOW_MS    180000  // 3 min window for Improv setup at first boot
+
 // =============================================================================
 //  NVS
 // =============================================================================
@@ -102,6 +111,8 @@
 // =============================================================================
 #ifdef DISPLAY_240x320
 #define BUTTON_DEFAULT_PIN    0       // CYD: GPIO4 is RGB LED, not usable
+#elif defined(BOARD_IS_SENSECAP)
+#define BUTTON_DEFAULT_PIN    38      // SenseCAP Indicator: GPIO38 (inverted, normally HIGH)
 #else
 #define BUTTON_DEFAULT_PIN    4       // default GPIO for physical button
 #endif
@@ -109,7 +120,11 @@
 // =============================================================================
 //  Display refresh
 // =============================================================================
+#if defined(BOARD_IS_SENSECAP)
+#define DISPLAY_UPDATE_MS          100    // ~10 Hz refresh (PSRAM framebuffer can handle it)
+#else
 #define DISPLAY_UPDATE_MS          250    // ~4 Hz refresh rate
+#endif
 #define DISPLAY_STATE_TIMEOUT_MS   60000  // 60s timeout for intermediate display states
 
 // =============================================================================
@@ -117,6 +132,11 @@
 // =============================================================================
 #if defined(BOARD_IS_C3)
 #define BUZZER_DEFAULT_PIN    3       // C3: GPIO 3 (GPIO 5 is backlight)
+#elif defined(BOARD_IS_SENSECAP)
+// SenseCAP Indicator: no buzzer hardware connected to ESP32-S3 GPIO.
+// The onboard MLT-8530 is on the RP2040 co-processor (not directly accessible).
+// Buzzer disabled (pin 0 = disabled in buzzer backend).
+#define BUZZER_DEFAULT_PIN    0
 #elif defined(DISPLAY_CYD) || defined(DISPLAY_240x320)
 #define BUZZER_DEFAULT_PIN    26      // CYD: GPIO 26
 #else
@@ -132,6 +152,8 @@
 
 #if defined(DISPLAY_CYD)
 #define LED_DEFAULT_PIN 22    // CYD: GPIO 22 on P3 connector
+#elif defined(BOARD_IS_SENSECAP)
+#define LED_DEFAULT_PIN 0     // SenseCAP Indicator: no dedicated LED pin (user must configure)
 #else
 #define LED_DEFAULT_PIN 0     // other boards: user must configure
 #endif

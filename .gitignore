@@ -7,9 +7,10 @@ codex/
 *.o
 *.obj
 *.elf
-firmware/
+/firmware/
 *.map
-tools/pushall_dump.json
-tools/ams_dump.json
+tools/pushall/*
+*.bak-*
 CLAUDE.md
 VLW_FONTS_PARKED.md
+anycubic-support-plans.md

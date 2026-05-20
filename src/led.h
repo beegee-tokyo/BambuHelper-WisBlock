@@ -48,4 +48,13 @@ bool ledTriggerTestEffect(uint8_t mode, uint16_t seconds, uint8_t peakBrightness
 // User interaction (button/touch) hook - aborts any active finish effect.
 void ledOnUserInteraction();
 
+// Hold-to-dim. Must be called every loop iteration regardless of hold state -
+// it owns the 2 s NVS save debounce. Returns true while this press should be
+// treated as a hold and tap actions suppressed (throughout DIM_ACTIVE including
+// forced aborts, plus the tick that transitions IDLE -> ACTIVE); false otherwise.
+//   heldNow     - any tracked input currently held
+//   holdMs      - duration of the held source (0 if none)
+//   suppressDim - caller-asserted abort (e.g. BOARD_BTN_3 co-pressed = shutdown combo)
+bool ledHoldDimUpdate(bool heldNow, uint32_t holdMs, bool suppressDim);
+
 #endif // LED_H
