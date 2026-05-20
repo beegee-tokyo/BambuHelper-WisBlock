@@ -90,7 +90,7 @@ void begin() {
   } else {
     s_present = false;
   }
-  Serial.printf("[BAT] ADC pin=%d rawAvg=%u Vpin=%umV Vbat=%.3fV (divider=%.4fx) present=%d pct=%u\n",
+  Serial.printf("[BAT] ADC pin=%d rawAvg=%u Vpin=%umV Vbat=%.3fV (divider=%.2fx) present=%d pct=%u\n",
                 BAT_ADC_PIN, rawAvg, (unsigned)mvAvg, v, (float)BAT_VOLT_DIVIDER, s_present, s_percent);
 #endif
 

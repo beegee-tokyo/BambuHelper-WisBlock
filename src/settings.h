@@ -25,6 +25,10 @@ enum GaugeType : uint8_t {
   GAUGE_AMS_TEMP_2  = 16,  // AMS unit 2 temperature
   GAUGE_AMS_TEMP_3  = 17,  // AMS unit 3 temperature
   GAUGE_AMS_TEMP_4  = 18,  // AMS unit 4 temperature
+  GAUGE_AMS_FILAMENT_1 = 19,    // AMS unit 1 - all 4 trays + humidity
+  GAUGE_AMS_FILAMENT_2 = 20,    // AMS unit 2 - all 4 trays + humidity
+  GAUGE_AMS_FILAMENT_3 = 21,    // AMS unit 3 - all 4 trays + humidity
+  GAUGE_AMS_FILAMENT_4 = 22,    // AMS unit 4 - all 4 trays + humidity
   GAUGE_TYPE_COUNT  // sentinel - always last
 };
 
@@ -53,6 +57,7 @@ struct DisplaySettings {
   uint16_t clockTimeColor; // clock digits color (RGB565)
   uint16_t clockDateColor; // clock date/AM-PM color (RGB565)
   bool     showBatteryIndicator; // Waveshare boards: show battery icon in status bar
+  bool     amsView;        // 240x240: replace gauge row 2 with AMS strip
   GaugeColors progress;
   GaugeColors nozzle;
   GaugeColors bed;

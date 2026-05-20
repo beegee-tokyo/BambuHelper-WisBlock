@@ -44,6 +44,17 @@
 #define LY_WIFI_X    8
 #define LY_WIFI_Y    462
 
+// --- Battery indicator placeholders ---
+// SenseCAP has no battery hardware - shouldShowBatteryIndicator() short-circuits
+// at runtime, so these values are never actually drawn. They exist solely so the
+// unconditionally-compiled drawBatteryPrefix/drawWifiSignalIndicator helpers in
+// display_ui.cpp will compile on this build. Values mirror layout_default.h
+// scaled 2x in case battery hardware is ever added.
+#define LY_BAT_W       16
+#define LY_BAT_H       32
+#define LY_BAT_TEXT_X  24
+#define LY_BAT_SHIFT_X 28
+
 // --- Idle screen (with printer) ---
 #define LY_IDLE_NAME_Y      60
 #define LY_IDLE_STATE_Y      100

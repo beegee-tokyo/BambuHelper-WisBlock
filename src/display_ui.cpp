@@ -10,15 +10,60 @@
 #include "bambu_mqtt.h"
 #include "settings.h"
 #include "tasmota.h"
+#include "fonts.h"
+#include "battery.h"
 #include <WiFi.h>
 #include <time.h>
+#if defined(BOARD_IS_SENSECAP)
+#include <Wire.h>     // PCA9535PW I2C IO expander
+#endif
 #include <new>   // placement new for CYD panel variant selection
 
 // =============================================================================
 //  LovyanGFX board-specific configurations
 // =============================================================================
 
-#if defined(BOARD_IS_S3)
+#if defined(BOARD_IS_S3_ZERO)
+// --- Waveshare ESP32-S3-Zero + external ST7789 240x240 -----------------------
+class LGFX_S3Zero : public lgfx::LGFX_Device {
+  lgfx::Panel_ST7789  _panel;
+  lgfx::Bus_SPI       _bus;
+public:
+  LGFX_S3Zero() {
+    {
+      auto cfg = _bus.config();
+      cfg.spi_host   = SPI2_HOST;
+      cfg.spi_mode   = 0;
+      cfg.freq_write = 40000000;
+      cfg.freq_read  = 16000000;
+      cfg.pin_sclk   = 12;
+      cfg.pin_mosi   = 11;
+      cfg.pin_miso   = -1;
+      cfg.pin_dc     = 9;
+      cfg.use_lock   = true;
+      _bus.config(cfg);
+      _panel.setBus(&_bus);
+    }
+    {
+      auto cfg = _panel.config();
+      cfg.pin_cs   = 10;
+      cfg.pin_rst  = 8;
+      cfg.pin_busy = -1;
+      cfg.memory_width  = 240;
+      cfg.memory_height = 320;   // ST7789 chip GRAM is 240x320; visible rows 0-239
+      cfg.panel_width   = 240;
+      cfg.panel_height  = 240;
+      cfg.offset_x      = 0;
+      cfg.offset_y      = 0;
+      cfg.readable      = false;
+      _panel.config(cfg);
+    }
+    setPanel(&_panel);
+  }
+};
+static LGFX_S3Zero _tft_instance;
+
+#elif defined(BOARD_IS_S3)
 // --- ESP32-S3 Super Mini + ST7789 240x240 ------------------------------------
 class LGFX_S3 : public lgfx::LGFX_Device {
   lgfx::Panel_ST7789  _panel;
@@ -122,6 +167,52 @@ static LGFX_CYD_Storage   _tft_storage;
 // constructed variant. Defaults to V2; rebound via placement-new in
 // initDisplay() if the user selected Classic.
 static lgfx::LGFX_Device& _tft_instance = _tft_storage.v2;
+
+#elif defined(BOARD_IS_TZT_2432)
+// --- TZT L1435-2.4 (ESP32 + ST7789V 240x320) -------------------------------
+// Same SPI/CS/DC pinout as CYD, but ST7789V driver. Backlight is on GPIO27
+// (set via BACKLIGHT_PIN). RST is not wired on the typical TZT variant - if a
+// future user reports init failure we may need to switch pin_rst to 12.
+class LGFX_TZT_2432 : public lgfx::LGFX_Device {
+  lgfx::Panel_ST7789  _panel;
+  lgfx::Bus_SPI       _bus;
+public:
+  LGFX_TZT_2432() {
+    {
+      auto cfg = _bus.config();
+      cfg.spi_host   = VSPI_HOST;
+      cfg.spi_mode   = 0;
+      cfg.freq_write = 27000000;
+      cfg.freq_read  = 16000000;
+      cfg.pin_sclk   = 14;
+      cfg.pin_mosi   = 13;
+      cfg.pin_miso   = -1;
+      cfg.pin_dc     = 2;
+      cfg.use_lock   = true;
+      _bus.config(cfg);
+      _panel.setBus(&_bus);
+    }
+    {
+      auto cfg = _panel.config();
+      cfg.pin_cs    = 15;
+      cfg.pin_rst   = -1;
+      cfg.pin_busy  = -1;
+      cfg.memory_width  = 240;
+      cfg.memory_height = 320;
+      cfg.panel_width   = 240;
+      cfg.panel_height  = 320;
+      cfg.offset_x      = 0;
+      cfg.offset_y      = 0;
+      cfg.offset_rotation = 0;
+      cfg.invert        = true;
+      cfg.rgb_order     = false;
+      cfg.readable      = false;
+      _panel.config(cfg);
+    }
+    setPanel(&_panel);
+  }
+};
+static LGFX_TZT_2432 _tft_instance;
 
 #elif defined(BOARD_IS_WS200)
 // --- Waveshare ESP32-S3-Touch-LCD-2 (2.0" ST7789 240x320) --------------------
@@ -243,6 +334,140 @@ public:
 };
 static LGFX_C3 _tft_instance;
 
+#elif defined(BOARD_IS_SENSECAP)
+// --- SenseCAP Indicator (ESP32-S3 + ST7701S 480x480 RGB) ---------------------
+//
+// Hardware:
+//   ST7701S 480x480 RGB TFT with SPI init commands
+//   PCA9535PW I2C IO expander (addr 0x20) for display CS/RST and touch INT/RST
+//   FT5X06 capacitive touch (I2C addr 0x48)
+//   Backlight PWM on GPIO45
+//
+// The display init sequence:
+//   1. Initialize I2C bus and PCA9535PW IO expander
+//   2. Toggle display reset via IO expander pin 5
+//   3. Pull display CS low via IO expander pin 4
+//   4. Send ST7701S init commands via SPI (3-wire: CLK=41, MOSI=48)
+//   5. Release display CS (high) via IO expander pin 4
+//   6. Switch to LCD_CAM RGB parallel mode for pixel data
+
+#include <lgfx/v1/platforms/esp32s3/Panel_RGB.hpp>
+#include <lgfx/v1/platforms/esp32s3/Bus_RGB.hpp>
+
+// PCA9535PW I2C IO expander definitions
+#define PCA9535_I2C_SDA   39
+#define PCA9535_I2C_SCL   40
+#define PCA9535_ADDR       0x20
+#define PCA9535_PIN_DISP_CS  4   // Display chip select (active LOW)
+#define PCA9535_PIN_DISP_RST  5   // Display reset (active LOW)
+#define PCA9535_PIN_TOUCH_RST 7 // Touch reset (active LOW)
+// IO_EXPANDER flag for LovyanGFX: upper bits of I2C expander GPIO pin
+// (pin | 0x40) tells LovyanGFX to use I2C expander for that GPIO
+#define IO_EXPANDER 0x40
+
+// Custom panel class for SenseCAP Indicator ST7701S.
+// Uses default Panel_ST7701 init commands (0x3A=0x60 RGB666, 0x21 IPS inversion).
+// The default LovyanGFX Panel_ST7701 init matches Meshtastic's working config.
+// RGB666 (0x60) is correct even with 16-bit bus — the ST7701S maps the 16 data
+// lines to its internal 18-bit RGB channels correctly when set to RGB666 mode.
+// Using RGB565 (0x50) caused R↔G channel swap because the bit packing differs.
+class Panel_ST7701_SenseCAP : public lgfx::Panel_ST7701 {
+  // No getInitCommands override — use default Panel_ST7701 init sequence:
+  // - 0x3A=0x60 (RGB666 pixel format)
+  // - 0x21 (IPS inversion on)
+  // - All voltage/gamma registers from default list0
+};
+
+class LGFX_SenseCAP : public lgfx::LGFX_Device {
+  Panel_ST7701_SenseCAP _panel;
+  lgfx::Bus_RGB          _bus;
+public:
+  LGFX_SenseCAP() {
+    // --- Panel config (480x480 ST7701S) ---
+    {
+      auto cfg = _panel.config();
+      cfg.memory_width  = 480;   // Match Meshtastic working config (ST7701S internal column count for 480px panel)
+      cfg.memory_height = 480;
+      cfg.panel_width   = 480;
+      cfg.panel_height  = 480;
+      cfg.offset_x    = 0;
+      cfg.offset_y  = 0;
+      cfg.offset_rotation = 2;  // Panel is mounted 180° rotated — apply 180° offset so rotation 0 = upright
+      cfg.invert     = false;  // Default Panel_ST7701 list0 already sends 0x21 (IPS inversion on). Setting this true would send 0x21 AGAIN toggling inversion OFF.
+      cfg.pin_rst    = -1;      // RST is via PCA9535PW — managed in initDisplay()
+      _panel.config(cfg);
+    }
+    // --- SPI init pins for ST7701S command interface ---
+    // Commands are sent via 3-wire SPI (9-bit) before the RGB data bus starts.
+    // CS is routed through the PCA9535PW IO expander (pin 4), so we tell
+    // LovyanGFX to use GPIO 4 | IO_EXPANDER (0x44) as the CS pin — this is
+    // how Meshtastic configures it too. LovyanGFX will handle CS toggling.
+    {
+      auto detail = _panel.config_detail();
+      detail.pin_cs    = (4 | IO_EXPANDER);  // CS via PCA9535 pin 4 — mverch67 fork handles IO expander GPIO
+      detail.pin_sclk  = 41;                 // SPI clock for init commands
+      detail.pin_mosi  = 48;                 // SPI data for init commands
+      detail.use_psram = 1;                   // Use PSRAM for framebuffer (per Meshtastic working config)
+      _panel.config_detail(detail);
+    }
+    // --- RGB data bus (via LCD_CAM peripheral) ---
+    // Pin mapping from Seeed's official SenseCAP Indicator Arduino tutorial
+    // and ESPHome ST7701S component. RGB565 = 16-bit, D0-D15.
+    {
+      auto bus_cfg = _bus.config();
+      bus_cfg.panel = &_panel;  // CRITICAL: Bus_RGB needs panel reference for getWriteDepth()
+
+      // Control signals
+      bus_cfg.pin_pclk    = 21;
+      bus_cfg.pin_vsync   = 17;
+      bus_cfg.pin_hsync   = 16;
+      bus_cfg.pin_henable = 18;  // DE (Data Enable)
+
+      // RGB565 data pins — matched to Meshtastic 2.7.15 working config
+      // R0-R4 = GPIOs 4,3,2,1,0 (d11-d15), G0-G5 = GPIOs 10,9,8,7,6,5 (d5-d10)
+      // B0-B4 = GPIOs 15,14,13,12,11 (d0-d4)
+      bus_cfg.pin_d0  = 15;  // B0
+      bus_cfg.pin_d1  = 14;  // B1
+      bus_cfg.pin_d2  = 13;  // B2
+      bus_cfg.pin_d3  = 12;  // B3
+      bus_cfg.pin_d4  = 11;  // B4
+      bus_cfg.pin_d5  = 10;  // G0
+      bus_cfg.pin_d6  =  9;  // G1
+      bus_cfg.pin_d7  =  8;  // G2
+      bus_cfg.pin_d8  =  7;  // G3
+      bus_cfg.pin_d9  =  6;  // G4
+      bus_cfg.pin_d10 =  5;  // G5
+      bus_cfg.pin_d11 =  4;  // R0
+      bus_cfg.pin_d12 =  3;  // R1
+      bus_cfg.pin_d13 =  2;  // R2
+      bus_cfg.pin_d14 =  1;  // R3
+      bus_cfg.pin_d15 =  0;  // R4
+
+      // Pixel clock frequency — 6 MHz per Meshtastic working config
+      bus_cfg.freq_write = 6000000;
+
+      // Timing — matched to Meshtastic 2.7.15 working config
+      bus_cfg.hsync_polarity    = 0;   // Active high (per Meshtastic)
+      bus_cfg.hsync_front_porch = 10;
+      bus_cfg.hsync_pulse_width = 8;
+      bus_cfg.hsync_back_porch  = 50;
+      bus_cfg.vsync_polarity    = 0;   // Active high (per Meshtastic)
+      bus_cfg.vsync_front_porch = 10;
+      bus_cfg.vsync_pulse_width = 8;
+      bus_cfg.vsync_back_porch  = 20;
+      bus_cfg.pclk_active_neg   = 0;   // PCLK active high (per Meshtastic)
+      bus_cfg.de_idle_high      = 1;   // DE idle high (per Meshtastic)
+      bus_cfg.pclk_idle_high    = 0;   // PCLK idle low (per Meshtastic)
+
+      _bus.config(bus_cfg);
+      _panel.setBus(&_bus);
+    }
+    setPanel(&_panel);
+  }
+};
+static LGFX_SenseCAP _tft_instance;
+
+
 #elif defined(BOARD_IS_RAK3312)
 // --- RAKwireless ESP32-S3-Touch-LCD-1.54 (1.54" ST7789 240x320) ---------------
 class LGFX_14014 : public lgfx::LGFX_Device {
@@ -284,7 +509,7 @@ public:
 static LGFX_14014 _tft_instance;
 
 #else
-  #error "No board variant defined. Add BOARD_IS_S3, DISPLAY_CYD, BOARD_IS_C3, BOARD_IS_WS200 or BOARD_IS_WS154 or BOARD_IS_RAK3312 to build_flags."
+  #error "No board variant defined. Add BOARD_IS_S3_ZERO, BOARD_IS_S3, DISPLAY_CYD, BOARD_IS_C3, BOARD_IS_WS200, BOARD_IS_WS154, BOARD_IS_SENSECAP or BOARD_IS_RAK3312 to build_flags."
 #endif
 
 // Global pointer + reference — accessed via `tft` throughout the codebase.
@@ -307,6 +532,30 @@ static unsigned long lastDisplayUpdate = 0;
 static BambuState prevState;
 static bool prevWaitingForDoor = false;
 static unsigned long connectScreenStart = 0;
+
+// Battery indicator cache: forces a bottom-bar redraw when the icon's visible
+// state, percentage, or critical-blink phase changes. Without this, hot-plug
+// or web-UI toggle wouldn't refresh the bar until the next forced redraw.
+static bool    prevBatShown          = false;
+static uint8_t prevBatPercent        = 0;
+static bool    prevBatCriticalBlink  = false;
+static inline void resetBatteryRedrawCache() {
+  prevBatShown          = false;
+  prevBatPercent        = 0;
+  prevBatCriticalBlink  = false;
+}
+static bool    batteryStateChanged() {
+  bool shown = dispSettings.showBatteryIndicator && Battery::isPresent();
+  uint8_t pct = Battery::percent();
+  bool blink = Battery::isCritical() ? ((millis() / 500) & 1) != 0 : false;
+  bool changed = (shown != prevBatShown) ||
+                 (shown && pct != prevBatPercent) ||
+                 (shown && Battery::isCritical() && blink != prevBatCriticalBlink);
+  prevBatShown          = shown;
+  prevBatPercent        = pct;
+  prevBatCriticalBlink  = blink;
+  return changed;
+}
 
 // ---------------------------------------------------------------------------
 //  Smooth gauge interpolation - values lerp toward MQTT actuals each frame
@@ -408,8 +657,51 @@ static inline bool landBottomBarFullWidth(uint8_t) { return true; }
 //  Init
 // ---------------------------------------------------------------------------
 void initDisplay() {
+
+#if defined(BOARD_IS_SENSECAP)
+  // Initialize PCA9535PW I2C IO expander before display init.
+  // The SenseCAP Indicator routes display CS and RESET through this expander
+  // since they can't be connected directly to ESP32-S3 GPIOs.
+  Wire.begin(PCA9535_I2C_SDA, PCA9535_I2C_SCL, 400000);
+
+  // Configure expander pins: P04 (DISP_CS), P05 (DISP_RST), P07 (TOUCH_RST) as outputs
+  // P06 (TOUCH_INT) stays as input. Write 0xBF to config register (bit 6 = 1 = input)
+  // PCA9535 register map: 0x06=Configuration Port 0, 0x02=Output Port 0
+  Wire.beginTransmission(PCA9535_ADDR);
+  Wire.write(0x06);  // Configuration register (port 0)
+  Wire.write(0x40);  // P06=input, rest=output
+  Wire.endTransmission();
+
+  // Start with CS HIGH (deselected), RST HIGH (not in reset), TOUCH_RST HIGH
+  Wire.beginTransmission(PCA9535_ADDR);
+  Wire.write(0x02);  // Output register (port 0)
+  Wire.write((1 << PCA9535_PIN_DISP_CS) | (1 << PCA9535_PIN_DISP_RST) | (1 << PCA9535_PIN_TOUCH_RST));
+  Wire.endTransmission();
+  delay(10);
+
+  // Hardware reset: pull RST LOW for 10ms then HIGH
+  Wire.beginTransmission(PCA9535_ADDR);
+  Wire.write(0x02);  // Output register (port 0)
+  Wire.write((1 << PCA9535_PIN_DISP_CS) | (1 << PCA9535_PIN_TOUCH_RST));  // RST LOW
+  Wire.endTransmission();
+  delay(10);
+  Wire.beginTransmission(PCA9535_ADDR);
+  Wire.write(0x02);  // Output register (port 0)
+  Wire.write((1 << PCA9535_PIN_DISP_CS) | (1 << PCA9535_PIN_DISP_RST) | (1 << PCA9535_PIN_TOUCH_RST));  // RST HIGH
+  Wire.endTransmission();
+  delay(120);  // ST7701S needs time after reset
+
+  // Pull CS LOW for SPI init commands. LovyanGFX uses IO_EXPANDER-aware GPIO
+  // for pin_cs=(4|IO_EXPANDER) when USE_ARDUINO_HAL_GPIO is defined.
+  Wire.beginTransmission(PCA9535_ADDR);
+  Wire.write(0x02);  // Output register (port 0)
+  Wire.write((0 << PCA9535_PIN_DISP_CS) | (1 << PCA9535_PIN_DISP_RST) | (1 << PCA9535_PIN_TOUCH_RST));  // CS LOW
+  Wire.endTransmission();
+  delay(1);
+#else
   Serial.println("Display: pre-init delay...");
   delay(500);
+#endif
 #if defined(DISPLAY_CYD)
   // Pick CYD panel variant based on loaded settings. Default static-init
   // already constructed V2; swap to Classic if user selected it.
@@ -426,8 +718,15 @@ void initDisplay() {
   _tft_instance.init();  // LovyanGFX configures SPI from the board class above
 #if defined(DISPLAY_CYD)
   applyCydPanelInversion();
-#elif defined(BOARD_IS_S3) || defined(BOARD_IS_C3) || defined(BOARD_IS_WS200) || defined(BOARD_IS_WS154) || defined(BOARD_IS_RAK3312)
+#elif defined(BOARD_IS_S3_ZERO) || defined(BOARD_IS_S3) || defined(BOARD_IS_C3) || defined(BOARD_IS_WS200) || defined(BOARD_IS_WS154) || defined(BOARD_IS_TZT_2432) || defined(BOARD_IS_RAK3312)
   _tft_instance.invertDisplay(true);  // ST7789 requires color inversion
+#elif defined(BOARD_IS_SENSECAP)
+  // ST7701S IPS inversion already handled by default Panel_ST7701 init (0x21 command).
+  // Release SPI CS HIGH now that init commands are done
+  Wire.beginTransmission(PCA9535_ADDR);
+  Wire.write(0x02);  // Output register (port 0)
+  Wire.write((1 << PCA9535_PIN_DISP_CS) | (1 << PCA9535_PIN_DISP_RST) | (1 << PCA9535_PIN_TOUCH_RST));  // CS HIGH
+  Wire.endTransmission();
 #endif
   Serial.println("Display: tft.init() done");
 #if defined(DISPLAY_240x320)
@@ -460,6 +759,7 @@ void initDisplay() {
 #endif
 
   memset(&prevState, 0, sizeof(prevState));
+  resetBatteryRedrawCache();
 
   // Splash screen — center on actual canvas (rotation-aware for 240x320)
   {
@@ -467,12 +767,12 @@ void initDisplay() {
     const int16_t sh = uiH();
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(CLR_GREEN, CLR_BG);
-  tft.setTextFont(4);
+    setFont(tft, FONT_LARGE);
     tft.drawString("BambuHelper", sw / 2, sh / 2 - 20);
-  tft.setTextFont(2);
+    setFont(tft, FONT_BODY);
   tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
     tft.drawString("Printer Monitor", sw / 2, sh / 2 + 10);
-  tft.setTextFont(1);
+    setFont(tft, FONT_SMALL);
     tft.drawString(FW_VERSION, sw / 2, sh / 2 + 30);
   }
 }
@@ -502,6 +802,7 @@ void applyDisplaySettings() {
 void triggerDisplayTransition() {
   // Clear previous state so everything redraws for the new printer
   memset(&prevState, 0, sizeof(prevState));
+  resetBatteryRedrawCache();
   smoothInited = false; // snap gauges to new printer's values
   resetGaugeTextCache();
   tft.fillScreen(dispSettings.bgColor);
@@ -556,24 +857,24 @@ static void drawAPMode() {
 
   // Title
   tft.setTextColor(CLR_GREEN, CLR_BG);
-  tft.setTextFont(4);
+  setFont(tft, FONT_LARGE);
   tft.drawString("WiFi Setup", cx, LY_AP_TITLE_Y);
 
   // Instructions
-  tft.setTextFont(2);
+  setFont(tft, FONT_BODY);
   tft.setTextColor(CLR_TEXT, CLR_BG);
   tft.drawString("Connect to WiFi:", cx, LY_AP_SSID_LBL_Y);
 
   // AP SSID
   tft.setTextColor(CLR_CYAN, CLR_BG);
-  tft.setTextFont(4);
+  setFont(tft, FONT_LARGE);
   char ssid[32];
   uint32_t mac = (uint32_t)(ESP.getEfuseMac() & 0xFFFF);
   snprintf(ssid, sizeof(ssid), "%s%04X", WIFI_AP_PREFIX, mac);
   tft.drawString(ssid, cx, LY_AP_SSID_Y);
 
   // Password
-  tft.setTextFont(2);
+  setFont(tft, FONT_BODY);
   tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
   tft.drawString("Password:", cx, LY_AP_PASS_LBL_Y);
   tft.setTextColor(CLR_TEXT, CLR_BG);
@@ -583,7 +884,7 @@ static void drawAPMode() {
   tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
   tft.drawString("Then open:", cx, LY_AP_OPEN_Y);
   tft.setTextColor(CLR_ORANGE, CLR_BG);
-  tft.setTextFont(4);
+  setFont(tft, FONT_LARGE);
   tft.drawString("192.168.4.1", cx, LY_AP_IP_Y);
 }
 
@@ -598,7 +899,7 @@ static void drawConnectingWiFi() {
   tft.setTextDatum(MC_DATUM);
 
   // Title
-  tft.setTextFont(2);
+  setFont(tft, FONT_BODY);
   tft.setTextColor(CLR_TEXT, CLR_BG);
   tft.drawString("Connecting to WiFi", cx, cy - 20);
 
@@ -634,11 +935,11 @@ static void drawWiFiConnected() {
   }
 
   tft.setTextColor(CLR_GREEN, CLR_BG);
-  tft.setTextFont(4);
+  setFont(tft, FONT_LARGE);
   tft.drawString("WiFi Connected", midX, midY + 10);
 
   tft.setTextColor(CLR_TEXT, CLR_BG);
-  tft.setTextFont(2);
+  setFont(tft, FONT_BODY);
   tft.drawString(WiFi.localIP().toString().c_str(), midX, midY + 40);
 }
 
@@ -654,9 +955,9 @@ static void drawOtaUpdate() {
   tft.setTextColor(CLR_TEXT, CLR_BG);
 
   // Title
-  tft.setTextFont(4);
+  setFont(tft, FONT_LARGE);
   tft.drawString("Updating", cx, cy - 60);
-  tft.setTextFont(2);
+  setFont(tft, FONT_BODY);
   tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
   tft.drawString("BambuHelper firmware", cx, cy - 36);
 
@@ -673,12 +974,12 @@ static void drawOtaUpdate() {
   // Percentage
   char pctBuf[8];
   snprintf(pctBuf, sizeof(pctBuf), "%d%%", pct);
-  tft.setTextFont(2);
+  setFont(tft, FONT_BODY);
   tft.setTextColor(CLR_TEXT, CLR_BG);
   tft.drawString(pctBuf, cx, cy + 14);
 
   // Status
-  tft.setTextFont(2);
+  setFont(tft, FONT_BODY);
   tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
   tft.drawString(getOtaAutoStatus(), cx, cy + 34);
 
@@ -697,7 +998,7 @@ static void drawConnectingMQTT() {
   tft.setTextDatum(MC_DATUM);
 
   // Title
-  tft.setTextFont(2);
+  setFont(tft, FONT_BODY);
   tft.setTextColor(CLR_TEXT, CLR_BG);
   tft.drawString("Connecting to Printer", cx, cy - 40);
 
@@ -714,7 +1015,7 @@ static void drawConnectingMQTT() {
   // Connection mode + printer info
   PrinterSlot &p = displayedPrinter();
   tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
-  tft.setTextFont(2);
+  setFont(tft, FONT_BODY);
 
   const char *modeStr = isCloudMode(p.config.mode) ? "Cloud" : "LAN";
   char infoBuf[40];
@@ -739,7 +1040,7 @@ static void drawConnectingMQTT() {
   // Diagnostics (only after first attempt)
   const MqttDiag &d = getMqttDiag(rotState.displayIndex);
   if (d.attempts > 0  ) {
-    tft.setTextFont(1);
+    setFont(tft, FONT_SMALL);
     tft.setTextDatum(MC_DATUM);
 
     char buf[40];
@@ -748,15 +1049,27 @@ static void drawConnectingMQTT() {
     tft.drawString(buf, cx, cy + 50);
 
     if (d.lastRc != 0) {
-      snprintf(buf, sizeof(buf), "Err: %s", mqttRcToString(d.lastRc));
+      bool cloudAuthErr = isCloudMode(p.config.mode) &&
+                          (d.lastRc == 4 || d.lastRc == 5);
       tft.setTextColor(CLR_RED, CLR_BG);
+      if (cloudAuthErr) {
+        // Cloud token rejected - server-side TTL is 90 days. May also be
+        // invalidated earlier if the user does "log out everywhere" or
+        // changes their password. The cookie in the browser may still look
+        // valid; the server is the source of truth.
+        tft.drawString("Token rejected", cx, cy + 62);
+        tft.drawString("Re-paste in web setup", cx, cy + 74);
+      } else {
+      snprintf(buf, sizeof(buf), "Err: %s", mqttRcToString(d.lastRc));
       tft.drawString(buf, cx, cy + 62);
     }
   }
 }
+}
 
 // Forward declaration (defined after CYD section)
 static void drawWifiSignalIndicator(const BambuState &s, int16_t wifiY);
+static int16_t drawBatteryPrefix(int16_t y);
 
 // ---------------------------------------------------------------------------
 //  Screen: Idle (connected, not printing)
@@ -768,22 +1081,22 @@ static void drawIdleNoPrinter() {
   tft.setTextDatum(MC_DATUM);
 
   tft.setTextColor(CLR_GREEN, CLR_BG);
-  tft.setTextFont(4);
+  setFont(tft, FONT_LARGE);
   tft.drawString("BambuHelper", cx, LY_IDLE_NP_TITLE_Y);
 
   tft.setTextColor(CLR_TEXT, CLR_BG);
-  tft.setTextFont(2);
+  setFont(tft, FONT_BODY);
   tft.drawString("WiFi Connected", cx, LY_IDLE_NP_WIFI_Y);
 
   tft.fillCircle(cx, LY_IDLE_NP_DOT_Y, 5, CLR_GREEN);
 
   tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
-  tft.setTextFont(2);
+  setFont(tft, FONT_BODY);
   tft.drawString("No printer configured", cx, LY_IDLE_NP_MSG_Y);
   tft.drawString("Open in browser:", cx, LY_IDLE_NP_OPEN_Y);
 
   tft.setTextColor(CLR_ORANGE, CLR_BG);
-  tft.setTextFont(4);
+  setFont(tft, FONT_LARGE);
   tft.drawString(WiFi.localIP().toString().c_str(), cx, LY_IDLE_NP_IP_Y);
 }
 
@@ -804,8 +1117,29 @@ static uint16_t humidityColor(uint8_t level) {
   return CLR_RED;
 }
 
+// Draw a string left-aligned, hard-truncating at character boundary if it
+// doesn't fit maxW. No ellipsis.
+// Assumes font and text color are already configured by the caller.
+static void drawStringClipped(const char* s, int16_t x, int16_t y, int16_t maxW) {
+  if (!s || !*s) return;
+  if (maxW <= 0) return;
+  if (tft.textWidth(s) <= maxW) {
+    tft.drawString(s, x, y);
+    return;
+  }
+  char buf[40];
+  size_t n = strlen(s);
+  if (n >= sizeof(buf)) n = sizeof(buf) - 1;
+  memcpy(buf, s, n);
+  buf[n] = '\0';
+  while (n > 0 && tft.textWidth(buf) > maxW) {
+    buf[--n] = '\0';
+  }
+  if (n > 0) tft.drawString(buf, x, y);
+}
+
 static void drawCelsiusUnit(int16_t x, int16_t y, uint16_t color) {
-  tft.setTextFont(4);
+  setFont(tft, FONT_LARGE);
   tft.setTextDatum(ML_DATUM);
   tft.setTextColor(color, CLR_BG);
   tft.drawString("C", x + 12, y);
@@ -892,7 +1226,7 @@ static void drawIdleDrying(PrinterSlot &p) {
 
     // Printer name (left)
     tft.setTextDatum(ML_DATUM);
-    tft.setTextFont(2);
+    setFont(tft, FONT_BODY);
     tft.setTextColor(CLR_TEXT, CLR_BG);
     const char *name = (p.config.name[0] != '\0') ? p.config.name : "Bambu";
     tft.drawString(name, LY_HDR_NAME_X, LY_HDR_CY);
@@ -927,7 +1261,7 @@ static void drawIdleDrying(PrinterSlot &p) {
 
     tft.fillRect(0, 30, scrW, 20, CLR_BG);
   tft.setTextDatum(MC_DATUM);
-  tft.setTextFont(2);
+    setFont(tft, FONT_BODY);
   tft.setTextColor(CLR_ORANGE, CLR_BG);
   tft.drawString(unitName, cx, 40);
   }
@@ -945,7 +1279,7 @@ static void drawIdleDrying(PrinterSlot &p) {
       snprintf(tempBuf, sizeof(tempBuf), "%d", tempShown);
       const int16_t tempCx = 88;
       tft.setTextDatum(MC_DATUM);
-      tft.setTextFont(7);
+      setFont(tft, FONT_7SEG);
       tft.setTextColor(CLR_ORANGE, CLR_BG);
       int16_t tempW = tft.textWidth(tempBuf);
       tft.drawString(tempBuf, tempCx - 10, 112);
@@ -965,10 +1299,10 @@ static void drawIdleDrying(PrinterSlot &p) {
         snprintf(timeBuf, sizeof(timeBuf), "%dm", m);
 
       tft.setTextDatum(MC_DATUM);
-      tft.setTextFont(2);
+      setFont(tft, FONT_BODY);
       tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
       tft.drawString("Remaining", infoCx, 72);
-      tft.setTextFont(4);
+      setFont(tft, FONT_LARGE);
       tft.setTextColor(CLR_YELLOW, CLR_BG);
       tft.drawString(timeBuf, infoCx, 96);
     }
@@ -979,10 +1313,10 @@ static void drawIdleDrying(PrinterSlot &p) {
       snprintf(humBuf, sizeof(humBuf), "%d%%", u.humidityRaw);
 
       tft.setTextDatum(MC_DATUM);
-      tft.setTextFont(2);
+      setFont(tft, FONT_BODY);
       tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
       tft.drawString("Humidity", infoCx, 128);
-      tft.setTextFont(4);
+      setFont(tft, FONT_LARGE);
       tft.setTextColor(humidityColor(u.humidity), CLR_BG);
       tft.drawString(humBuf, infoCx, 152);
     }
@@ -995,7 +1329,7 @@ static void drawIdleDrying(PrinterSlot &p) {
     char tempBuf[14];
       snprintf(tempBuf, sizeof(tempBuf), "%d", tempShown);
     tft.setTextDatum(MC_DATUM);
-    tft.setTextFont(7);
+      setFont(tft, FONT_7SEG);
     tft.setTextColor(CLR_ORANGE, CLR_BG);
     int16_t tempW = tft.textWidth(tempBuf);
     tft.drawString(tempBuf, cx - 10, 100);
@@ -1016,7 +1350,7 @@ static void drawIdleDrying(PrinterSlot &p) {
       snprintf(timeBuf, sizeof(timeBuf), "%dm remaining", m);
 
     tft.setTextDatum(MC_DATUM);
-    tft.setTextFont(4);
+      setFont(tft, FONT_LARGE);
     tft.setTextColor(CLR_YELLOW, CLR_BG);
     tft.drawString(timeBuf, cx, timeY);
   }
@@ -1029,7 +1363,7 @@ static void drawIdleDrying(PrinterSlot &p) {
     snprintf(humBuf, sizeof(humBuf), "Humidity: %d%%", u.humidityRaw);
 
     tft.setTextDatum(MC_DATUM);
-    tft.setTextFont(4);
+      setFont(tft, FONT_LARGE);
     tft.setTextColor(humidityColor(u.humidity), CLR_BG);
     tft.drawString(humBuf, cx, humY);
   }
@@ -1042,7 +1376,7 @@ static void drawIdleDrying(PrinterSlot &p) {
     char tempBuf[14];
     snprintf(tempBuf, sizeof(tempBuf), "%d", tempShown);
     tft.setTextDatum(MC_DATUM);
-    tft.setTextFont(7);
+    setFont(tft, FONT_7SEG);
     tft.setTextColor(CLR_ORANGE, CLR_BG);
     int16_t tempW = tft.textWidth(tempBuf);
     tft.drawString(tempBuf, cx - 10, 82);
@@ -1062,7 +1396,7 @@ static void drawIdleDrying(PrinterSlot &p) {
       snprintf(timeBuf, sizeof(timeBuf), "%dm remaining", m);
 
     tft.setTextDatum(MC_DATUM);
-    tft.setTextFont(2);
+    setFont(tft, FONT_BODY);
     tft.setTextColor(CLR_YELLOW, CLR_BG);
     tft.drawString(timeBuf, cx, 140);
   }
@@ -1074,7 +1408,7 @@ static void drawIdleDrying(PrinterSlot &p) {
     snprintf(humBuf, sizeof(humBuf), "Humidity: %d%%", u.humidityRaw);
 
     tft.setTextDatum(MC_DATUM);
-    tft.setTextFont(2);
+    setFont(tft, FONT_BODY);
     tft.setTextColor(humidityColor(u.humidity), CLR_BG);
     tft.drawString(humBuf, cx, 170);
   }
@@ -1131,7 +1465,7 @@ static void drawIdleDrying(PrinterSlot &p) {
     } else {
       snprintf(etaBuf, sizeof(etaBuf), "---");
     }
-    tft.setTextFont(4);
+    setFont(tft, FONT_LARGE);
     tft.setTextColor(CLR_GREEN, CLR_BG);
     tft.drawString(etaBuf, cx, etaTextY);
   }
@@ -1165,12 +1499,22 @@ static void drawIdleDrying(PrinterSlot &p) {
 
 static bool wasNoPrinter = false;
 
-// Forward declarations for 240x320 functions used before their definition
-#if defined(DISPLAY_240x320)
+// Forward declarations for AMS-strip functions. Available on all builds that
+// have a 240px-wide AMS layout (240x320 + 240x240). Excluded on the 480x480
+// SenseCAP build whose layout has no LY_AMS_* constants.
+#if !defined(DISPLAY_480x480)
 static void drawAmsStrip(const AmsState& ams, int16_t zoneY, int16_t zoneH, int16_t barH,
                          int16_t barMaxW = LY_AMS_BAR_MAX_W,
                          bool showFilamentTypes = false);
 static bool useEnhancedPortraitAms(const AmsState& ams);
+#endif
+
+// Helper macro for the 240x240-only AMS-view feature (replaces gauge row 2
+// with an AMS strip). The HTML row, gauge gating, and dispatch are gated by
+// this macro so 240x320 (which already has a permanent AMS strip) and 480x480
+// (no LY_AMS_*) skip the new code path.
+#if !defined(DISPLAY_240x320) && !defined(DISPLAY_480x480)
+  #define LAYOUT_240x240_AMS_VIEW 1
 #endif
 
 static void drawIdle() {
@@ -1185,6 +1529,7 @@ static void drawIdle() {
     wasNoPrinter = false;
     tft.fillScreen(dispSettings.bgColor);
     memset(&prevState, 0, sizeof(prevState));
+    resetBatteryRedrawCache();
     forceRedraw = true;
   }
 
@@ -1215,6 +1560,7 @@ static void drawIdle() {
     dryingDropMs = 0;
     tft.fillScreen(dispSettings.bgColor);
     memset(&prevState, 0, sizeof(prevState));
+    resetBatteryRedrawCache();
     forceRedraw = true;
   }
 
@@ -1246,14 +1592,14 @@ static void drawIdle() {
   // Printer name (only on forceRedraw — name doesn't change)
   if (forceRedraw  ) {
     tft.setTextColor(CLR_GREEN, CLR_BG);
-    tft.setTextFont(4);
+    setFont(tft, FONT_LARGE);
     const char *name = (p.config.name[0] != '\0') ? p.config.name : "Bambu P1S";
     tft.drawString(name, cx, LY_IDLE_NAME_Y);
   }
 
   // Status badge — only redraw when state changes
   if (stateChanged  ) {
-    tft.setTextFont(2);
+    setFont(tft, FONT_BODY);
     uint16_t stateColor = CLR_TEXT_DIM;
     const char *stateStr = s.gcodeState;
     if (s.gcodeStateId == GCODE_IDLE) {
@@ -1290,7 +1636,7 @@ static void drawIdle() {
       const int16_t hintY = LY_IDLE_DOT_Y + 15;
       tft.fillRect(0, hintY - 6, scrW, 14, CLR_BG);
       if (showHint) {
-        tft.setTextFont(1);
+        setFont(tft, FONT_SMALL);
         tft.setTextDatum(MC_DATUM);
         tft.setTextColor(CLR_TEXT_DARK, CLR_BG);
         tft.drawString("Press to refresh", cx, hintY);
@@ -1366,7 +1712,9 @@ static void drawIdle() {
   float idleCurWatts = tasmotaGetWatts();
 
   int16_t botCY = scrH - 9;
-  bool bottomChanged = wifiChanged ||
+  bool batChanged = batteryStateChanged();
+  bool bottomChanged = batChanged ||
+                       wifiChanged ||
              (s.ams.activeTray != prevState.ams.activeTray) ||
              (s.doorOpen != prevState.doorOpen) ||
              (s.doorSensorPresent != prevState.doorSensorPresent) ||
@@ -1377,22 +1725,24 @@ static void drawIdle() {
 
   if (bottomChanged  ) {
     tft.fillRect(0, scrH - 18, scrW, 18, CLR_BG);
-    tft.setTextFont(2);
+    setFont(tft, FONT_BODY);
 
     // Left: filament circle (if AMS active) or WiFi signal
     if (s.ams.present && s.ams.activeTray < AMS_MAX_TRAYS && s.ams.trays[s.ams.activeTray].present) {
       AmsTray &t = s.ams.trays[s.ams.activeTray];
-      tft.drawCircle(10, botCY, 5, CLR_TEXT_DARK);
-      tft.fillCircle(10, botCY, 4, t.colorRgb565);
+      int16_t bx = drawBatteryPrefix(botCY);
+      tft.drawCircle(10 + bx, botCY, 5, CLR_TEXT_DARK);
+      tft.fillCircle(10 + bx, botCY, 4, t.colorRgb565);
       tft.setTextDatum(ML_DATUM);
       tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
-      tft.drawString(t.type, 19, botCY);
+      tft.drawString(t.type, 19 + bx, botCY);
     } else if (s.ams.vtPresent && s.ams.activeTray == 254) {
-      tft.drawCircle(10, botCY, 5, CLR_TEXT_DARK);
-      tft.fillCircle(10, botCY, 4, s.ams.vtColorRgb565);
+      int16_t bx = drawBatteryPrefix(botCY);
+      tft.drawCircle(10 + bx, botCY, 5, CLR_TEXT_DARK);
+      tft.fillCircle(10 + bx, botCY, 4, s.ams.vtColorRgb565);
       tft.setTextDatum(ML_DATUM);
       tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
-      tft.drawString(s.ams.vtType, 19, botCY);
+      tft.drawString(s.ams.vtType, 19 + bx, botCY);
     } else {
       drawWifiSignalIndicator(s, botCY);
     }
@@ -1437,6 +1787,13 @@ static uint16_t prevAmsTrayColors[AMS_MAX_TRAYS] = {0};
 static bool prevAmsTrayPresent[AMS_MAX_TRAYS] = {false};
 static int8_t prevAmsTrayRemain[AMS_MAX_TRAYS]; // init in drawAmsZone
 static char     prevAmsTrayTypes[AMS_MAX_TRAYS][16] = {{0}};
+
+#endif // DISPLAY_240x320 (prevAms* caches consumed only by drawAmsZone)
+
+// The stateless AMS helpers below also compile on 240x240 builds, where the
+// "AMS view" toggle reuses drawAmsStrip(). Excluded only on 480x480 (SenseCAP)
+// because layout_480x480.h does not define LY_AMS_*.
+#if !defined(DISPLAY_480x480)
 
 // Extract a short display label from a filament type string.
 // Takes the first space-delimited token, caps at maxChars, strips trailing
@@ -1679,7 +2036,7 @@ static void drawAmsStrip(const AmsState &ams,
           typeBuf[0] = '\0';
         }
         tft.setTextDatum(TC_DATUM);
-        tft.setTextFont(1);
+        setFont(tft, FONT_SMALL);
         tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
         if (typeBuf[0]) {
           tft.drawString(typeBuf, bx + barW / 2, typeY);
@@ -1694,8 +2051,9 @@ static void drawAmsStrip(const AmsState &ams,
 	snprintf(label, sizeof(label), "AMS %c %d%%", 'A' + u, cu.humidityRaw);
 	tft.setTextDatum(TC_DATUM);
     bool sm = dispSettings.smallLabels;
-    tft.setTextFont(sm ? 1 : 2);
-    tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
+    // setFont(tft, sm ? FONT_SMALL : FONT_BODY);
+    setFont(tft, FONT_SMALL);
+	tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
     tft.drawString(label, groupX + groupW / 2, labelY + (showFilamentTypes ? 0 : 2));
   }
 }
@@ -1713,6 +2071,10 @@ static void drawAmsStrip(const AmsState &ams,
 static bool useEnhancedPortraitAms(const AmsState& ams) {
   return ams.unitCount >= 1 && ams.unitCount <= 2;
 }
+
+#endif // !DISPLAY_480x480 (stateless AMS helpers)
+
+#if defined(DISPLAY_240x320)
 
 static void drawAmsZone(const BambuState &s, bool force) {
   // --- Change detection ---
@@ -1802,7 +2164,7 @@ static void drawAmsZone(const BambuState &s, bool force) {
       tft.fillRect(bx, LY_LAND_BADGE_Y, bw, LY_LAND_BADGE_H, dispSettings.bgColor);
 
       tft.setTextDatum(MC_DATUM);
-      tft.setTextFont(2);
+      setFont(tft, FONT_BODY);
       tft.setTextColor(badgeColor, dispSettings.bgColor);
       const int16_t cx = LY_LAND_AMS_X + LY_LAND_AMS_W / 2;
       // Dot + label centered in the right column.
@@ -1874,9 +2236,10 @@ static void drawAmsZone(const BambuState &s, bool force) {
 	  snprintf(label, sizeof(label), "AMS %c %d%%", 'A' + u, cu.humidityRaw);
 	  tft.setTextDatum(TC_DATUM);
       bool sm = dispSettings.smallLabels;
-      tft.setTextFont(sm ? 1 : 2);
-      tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
-      tft.drawString(label, LY_LAND_AMS_X + LY_LAND_AMS_W / 2, gy + barH + 2);
+	  // setFont(tft, sm ? FONT_SMALL : FONT_BODY);
+	  setFont(tft, FONT_SMALL);
+	  tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
+	  tft.drawString(label, LY_LAND_AMS_X + LY_LAND_AMS_W / 2, gy + barH + 1);
     }
 
   } else if (enhanced) {
@@ -1891,15 +2254,74 @@ static void drawAmsZone(const BambuState &s, bool force) {
 #endif // DISPLAY_240x320
 
 // ---------------------------------------------------------------------------
-//  Helper: draw WiFi signal indicator in bottom-left corner
+//  Helper: draw battery icon (vertical, 8x16) at (x, y) with fill from bottom.
+//  Footprint is 8 px wide x 16 px tall: 4x2 nub on top, 8x14 body below.
+// ---------------------------------------------------------------------------
+static void drawBatteryIconOnly(int16_t x, int16_t y, uint8_t pct) {
+  uint16_t fg;
+  if (pct < 20) fg = CLR_RED;
+  else if (pct < 50) fg = CLR_YELLOW;
+  else fg = CLR_GREEN;
+
+  bool blank = false;
+  if (Battery::isCritical()) {
+    blank = ((millis() / 500) & 1) != 0;
+  }
+
+  uint16_t outline = blank ? CLR_BG : CLR_TEXT_DIM;
+  // Clear footprint
+  tft.fillRect(x, y, 8, 16, CLR_BG);
+  // Top nub (centered, 4 wide x 2 tall)
+  tft.fillRect(x + 2, y, 4, 2, outline);
+  // Body outline (8 wide x 14 tall, starts at y+2). Interior is 6x12 at (x+1, y+3).
+  tft.drawRect(x, y + 2, 8, 14, outline);
+
+  if (!blank) {
+    int16_t levelH = (int16_t)((12 * (uint16_t)pct + 50) / 100);
+    if (levelH > 0) {
+      tft.fillRect(x + 1, y + 3 + (12 - levelH), 6, levelH, fg);
+    }
+  }
+}
+
+// True when the battery icon should be rendered: hardware presence AND user
+// has not disabled the indicator in the web UI.
+static inline bool shouldShowBatteryIndicator() {
+  return dispSettings.showBatteryIndicator && Battery::isPresent();
+}
+
+// ---------------------------------------------------------------------------
+//  Helper: draw WiFi signal indicator OR battery indicator (replaces WiFi
+//  on Waveshare boards when a battery is detected at boot).
 // ---------------------------------------------------------------------------
 static void drawWifiSignalIndicator(const BambuState &s, int16_t wifiY = LY_WIFI_Y) {
+  if (shouldShowBatteryIndicator()) {
+    int16_t iconY = wifiY - LY_BAT_H / 2;
+    drawBatteryIconOnly(LY_WIFI_X, iconY, Battery::percent());
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%u%%", (unsigned)Battery::percent());
+    tft.setTextDatum(ML_DATUM);
+    tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
+    tft.drawString(buf, LY_WIFI_X + LY_BAT_TEXT_X, wifiY);
+    return;
+  }
   drawIcon16(tft, LY_WIFI_X, wifiY - 8, icon_wifi, CLR_TEXT_DIM);
   tft.setTextDatum(ML_DATUM);
   tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
   char wifiBuf[12];
   snprintf(wifiBuf, sizeof(wifiBuf), "%ddBm", s.wifiSignal);
   tft.drawString(wifiBuf, LY_WIFI_X + 18, wifiY);
+}
+
+// ---------------------------------------------------------------------------
+//  Helper: draw battery icon as a prefix BEFORE swatch+filament name (on
+//  Waveshare boards). Returns x-offset to apply to swatch and text positions.
+// ---------------------------------------------------------------------------
+static int16_t drawBatteryPrefix(int16_t y) {
+  if (!shouldShowBatteryIndicator()) return 0;
+  int16_t iconY = y - LY_BAT_H / 2;
+  drawBatteryIconOnly(LY_WIFI_X, iconY, Battery::percent());
+  return LY_BAT_SHIFT_X;
 }
 
 // ---------------------------------------------------------------------------
@@ -2023,7 +2445,7 @@ static void drawPrinting() {
 
     // Printer name (left)
     tft.setTextDatum(ML_DATUM);
-    tft.setTextFont(2);
+    setFont(tft, FONT_BODY);
     tft.setTextColor(CLR_TEXT, hdrBg);
     const char *name = (p.config.name[0] != '\0') ? p.config.name : "Bambu P1S";
     tft.drawString(name, LY_HDR_NAME_X, LY_HDR_CY);
@@ -2038,7 +2460,7 @@ static void drawPrinting() {
 
     tft.setTextDatum(MR_DATUM);
     tft.setTextColor(badgeColor, hdrBg);
-    tft.setTextFont(2);
+      setFont(tft, FONT_BODY);
       tft.fillCircle(hdrW - LY_HDR_BADGE_RX - tft.textWidth(s.gcodeState) - 10, LY_HDR_CY, 4, badgeColor);
       tft.drawString(s.gcodeState, hdrW - LY_HDR_BADGE_RX, LY_HDR_CY);
     }
@@ -2054,6 +2476,40 @@ static void drawPrinting() {
     }
   }
 
+  // === AMS-view toggle (240x240 only): swap gauge row 2 for AMS strip ===
+#if defined(LAYOUT_240x240_AMS_VIEW)
+  const bool amsViewActive  = dispSettings.amsView;
+  const bool amsHasContent  = s.ams.present && s.ams.unitCount > 0;
+  const bool amsStripVisible = amsViewActive && amsHasContent;
+  static bool prevAmsViewActive   = false;
+  static bool prevAmsStripVisible = false;
+  static bool amsStripDirty       = false;
+
+  // Toggle: wipe both the row-2 gauge band and the AMS band. Start at the
+  // higher of the two top edges - LY_AMS_Y - 2 covers the active-tray notch
+  // in enhanced AMS, which extends slightly above LY_AMS_Y.
+  if (amsViewActive != prevAmsViewActive) {
+    const int16_t row2Top = LY_ROW2 - LY_GAUGE_R - 2;
+    const int16_t amsTop  = LY_AMS_Y - 2;
+    const int16_t y0      = (row2Top < amsTop) ? row2Top : amsTop;
+    const int16_t y1      = LY_AMS_Y + LY_AMS_H + 8;
+    tft.fillRect(0, y0, LY_W, y1 - y0, dispSettings.bgColor);
+    prevAmsViewActive   = amsViewActive;
+    prevAmsStripVisible = false;
+    amsStripDirty       = true;
+  }
+
+  // AMS disappeared while view is on - drawAmsStrip won't be called this
+  // frame, so explicitly wipe the band.
+  if (amsViewActive && prevAmsStripVisible && !amsStripVisible) {
+    tft.fillRect(0, LY_AMS_Y - 2, LY_W, LY_AMS_H + 10, dispSettings.bgColor);
+  }
+  prevAmsStripVisible = amsStripVisible;
+#else
+  const bool amsViewActive   = false;
+  const bool amsStripVisible = false;
+#endif
+
   // === Configurable 2x3 gauge grid ===
   {
     static const int16_t slotX[GAUGE_SLOT_COUNT] = {LY_COL1, LY_COL2, LY_COL3, LY_COL1, LY_COL2, LY_COL3};
@@ -2061,17 +2517,24 @@ static void drawPrinting() {
     static uint8_t prevSlotTypes[GAUGE_SLOT_COUNT] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
     for (uint8_t si = 0; si < GAUGE_SLOT_COUNT; si++) {
+      // Skip row-2 slots when AMS view replaces them. Mark prevSlotTypes as
+      // invalid so toggling back later forces a clean redraw.
+      if (amsViewActive && si >= 3) { prevSlotTypes[si] = 0xFF; continue; }
       uint8_t gt = p.config.gaugeSlots[si];
       if (gt >= GAUGE_TYPE_COUNT) gt = GAUGE_EMPTY;
 
       bool typeChanged = (gt != prevSlotTypes[si]);
       if (typeChanged) {
-        // Slot type changed (or first draw) - clear area and reset cache
+        // Slot type changed (or first draw) - clear area and reset cache.
+        // Label is drawn MC_DATUM at labelY, so its glyphs straddle that line;
+        // FONT_BODY (~20px) and FONT_SMALL (~14px) need a generous band to fully
+        // erase a longer previous label when shrinking to a shorter one.
         tft.fillCircle(slotX[si], slotY[si], gR + 2, dispSettings.bgColor);
-        // Clear label area below gauge
         bool sm = dispSettings.smallLabels;
-        tft.fillRect(slotX[si] - gR, slotY[si] + gR + (sm ? 1 : -3),
-               gR * 2, sm ? 12 : 16, dispSettings.bgColor);
+        int16_t labelY = slotY[si] + gR + (sm ? 3 : -1);
+        int16_t lh     = sm ? 18 : 24;
+        tft.fillRect(slotX[si] - gR - 2, labelY - lh / 2,
+                     gR * 2 + 4, lh, dispSettings.bgColor);
         prevSlotTypes[si] = gt;
       }
 
@@ -2090,7 +2553,7 @@ static void drawPrinting() {
           case GAUGE_CLOCK:       needDraw = true; break;  // text cache handles actual redraw
           case GAUGE_LAYER:       needDraw = s.layerNum != prevState.layerNum || s.totalLayers != prevState.totalLayers; break;
         default:
-          // AMS humidity / temperature gauges — index derived from enum value
+            // AMS humidity / temperature / filament gauges — index derived from enum value
             if (gt >= GAUGE_AMS_HUM_1 && gt <= GAUGE_AMS_HUM_4) {
             uint8_t ui = gt - GAUGE_AMS_HUM_1;
             const AmsUnit &cu = s.ams.units[ui], &pu = prevState.ams.units[ui];
@@ -2099,6 +2562,26 @@ static void drawPrinting() {
             uint8_t ui = gt - GAUGE_AMS_TEMP_1;
             const AmsUnit &cu = s.ams.units[ui], &pu = prevState.ams.units[ui];
             needDraw = cu.temp != pu.temp || cu.present != pu.present;
+            } else if (gt >= GAUGE_AMS_FILAMENT_1 && gt <= GAUGE_AMS_FILAMENT_4) {
+              uint8_t ui = gt - GAUGE_AMS_FILAMENT_1;
+              needDraw = s.ams.present != prevState.ams.present
+                      || s.ams.unitCount != prevState.ams.unitCount;
+              if (!needDraw) {
+                const AmsUnit &cu = s.ams.units[ui], &pu = prevState.ams.units[ui];
+                if (cu.present != pu.present
+                    || cu.humidity != pu.humidity
+                    || cu.trayCount != pu.trayCount) needDraw = true;
+              }
+              if (!needDraw) {
+                for (int t = 0; t < AMS_TRAYS_PER_UNIT; t++) {
+                  int idx = ui * AMS_TRAYS_PER_UNIT + t;
+                  const AmsTray &ct = s.ams.trays[idx], &pt = prevState.ams.trays[idx];
+                  if (ct.present != pt.present || ct.colorRgb565 != pt.colorRgb565
+                      || ct.remain != pt.remain || strcmp(ct.type, pt.type) != 0) {
+                    needDraw = true; break;
+                  }
+                }
+              }
           }
           break;
         }
@@ -2153,7 +2636,7 @@ static void drawPrinting() {
           if (fr) tft.fillCircle(cx, cy, gR + 2, dispSettings.bgColor);
         break;
         default: {
-        // AMS humidity / temperature gauges — index derived from enum value
+          // AMS humidity / temperature / filament gauges — index derived from enum value
         static const char *amsLabel[AMS_MAX_UNITS] = {"AMS 1", "AMS 2", "AMS 3", "AMS 4"};
         if (gt >= GAUGE_AMS_HUM_1 && gt <= GAUGE_AMS_HUM_4) {
           uint8_t ui = gt - GAUGE_AMS_HUM_1;
@@ -2164,6 +2647,9 @@ static void drawPrinting() {
           const AmsUnit &u = s.ams.units[ui];
           drawTempGauge(tft, cx, cy, gR, u.present ? u.temp : 0, 0, 60.0f,
                   dispSettings.chamberTemp.arc, amsLabel[ui], nullptr, fr, &dispSettings.chamberTemp);
+          } else if (gt >= GAUGE_AMS_FILAMENT_1 && gt <= GAUGE_AMS_FILAMENT_4) {
+            uint8_t ui = gt - GAUGE_AMS_FILAMENT_1;
+            drawAmsFilamentAllGauge(tft, cx, cy, gR, gT, s.ams, ui, fr);
         } else {
           if (fr)  tft.fillCircle(cx, cy, gR + 2, dispSettings.bgColor);
         }
@@ -2185,6 +2671,51 @@ static void drawPrinting() {
   }
 #endif
 
+  // === 240x240 AMS view: replaces gauge row 2 with the same AMS strip ===
+  // drawAmsStrip self-clears its zone every call, so call only when state
+  // actually changed - otherwise every render frame would flicker the bars.
+  // Change set mirrors the existing GAUGE_AMS_FILAMENT detection.
+#if defined(LAYOUT_240x240_AMS_VIEW)
+  if (amsStripVisible) {
+    bool needDraw = forceRedraw || amsStripDirty;
+    if (!needDraw) {
+      needDraw = (s.ams.unitCount != prevState.ams.unitCount)
+              || (s.ams.activeTray != prevState.ams.activeTray);
+    }
+    if (!needDraw) {
+      for (int u = 0; u < AMS_MAX_UNITS && !needDraw; u++) {
+        const AmsUnit& cu = s.ams.units[u];
+        const AmsUnit& pu = prevState.ams.units[u];
+        if (cu.present != pu.present || cu.trayCount != pu.trayCount) needDraw = true;
+      }
+    }
+    if (!needDraw) {
+      for (int t = 0; t < AMS_MAX_TRAYS && !needDraw; t++) {
+        const AmsTray& ct = s.ams.trays[t];
+        const AmsTray& pt = prevState.ams.trays[t];
+        if (ct.present != pt.present
+            || ct.colorRgb565 != pt.colorRgb565
+            || ct.remain != pt.remain) needDraw = true;
+      }
+    }
+    bool enhanced = useEnhancedPortraitAms(s.ams);
+    if (!needDraw && enhanced) {
+      for (int t = 0; t < AMS_MAX_TRAYS && !needDraw; t++) {
+        if (strcmp(s.ams.trays[t].type, prevState.ams.trays[t].type) != 0) needDraw = true;
+      }
+    }
+    if (needDraw) {
+      if (enhanced) {
+        drawAmsStrip(s.ams, LY_AMS_Y, LY_AMS_H, LY_AMS_BAR_H,
+                     LY_AMS_BAR_MAX_W_EXTRAS, /*showFilamentTypes=*/true);
+      } else {
+        drawAmsStrip(s.ams, LY_AMS_Y, LY_AMS_H, LY_AMS_BAR_H);
+      }
+      amsStripDirty = false;
+    }
+  }
+#endif
+
   // === Info line — ETA finish time or PAUSE/ERROR alert ===
   if (etaChanged || stateChanged  ) {
     const int16_t etaCx = etaW / 2;
@@ -2192,11 +2723,11 @@ static void drawPrinting() {
     tft.setTextDatum(MC_DATUM);
 
     if (s.gcodeStateId == GCODE_PAUSE) {
-      tft.setTextFont(4);
+      setFont(tft, FONT_LARGE);
       tft.setTextColor(CLR_YELLOW, CLR_BG);
       tft.drawString("PAUSED", etaCx, eff_etaTextY);
     } else if (s.gcodeStateId == GCODE_FAILED) {
-      tft.setTextFont(4);
+      setFont(tft, FONT_LARGE);
       tft.setTextColor(CLR_RED, CLR_BG);
       tft.drawString("ERROR!", etaCx, eff_etaTextY);
     } else if (s.remainingMinutes > 0) {
@@ -2235,7 +2766,7 @@ static void drawPrinting() {
           else
             snprintf(etaBuf, sizeof(etaBuf), "ETA: %d:%02d %s", etaH, etaTm.tm_min, ampm);
         }
-        tft.setTextFont(4);
+        setFont(tft, FONT_LARGE);
         tft.setTextColor(CLR_GREEN, CLR_BG);
         tft.drawString(etaBuf, etaCx, eff_etaTextY);
       } else {
@@ -2243,15 +2774,15 @@ static void drawPrinting() {
         char remBuf[24];
         uint16_t h = s.remainingMinutes / 60;
         uint16_t m = s.remainingMinutes % 60;
-		if (h != 0) snprintf(remBuf, sizeof(remBuf), "Remaining: %dh %02dm", h, m);
+		if (h > 0) snprintf(remBuf, sizeof(remBuf), "Remaining: %dh %02dm", h, m);
 		else
 			snprintf(remBuf, sizeof(remBuf), "Remaining: %02dm", m);
-		tft.setTextFont(4);
+		setFont(tft, FONT_LARGE);
         tft.setTextColor(CLR_TEXT, CLR_BG);
         tft.drawString(remBuf, etaCx, eff_etaTextY);
       }
     } else {
-      tft.setTextFont(4);
+      setFont(tft, FONT_LARGE);
       tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
       tft.drawString("ETA: ---", etaCx, eff_etaTextY);
     }
@@ -2279,7 +2810,8 @@ static void drawPrinting() {
 
   bool showingWifi = !(s.ams.present && s.ams.activeTray < AMS_MAX_TRAYS && s.ams.trays[s.ams.activeTray].present)
                   && !(s.ams.vtPresent && s.ams.activeTray == 254);
-  bool bottomChanged = forceRedraw || unitsZoneChanged ||
+  bool batChanged320 = batteryStateChanged();
+  bool bottomChanged = batChanged320 || forceRedraw || unitsZoneChanged ||
              (s.speedLevel != prevState.speedLevel) ||
              (s.doorOpen != prevState.doorOpen) ||
              (s.doorSensorPresent != prevState.doorSensorPresent) ||
@@ -2313,47 +2845,58 @@ static void drawPrinting() {
     }
 #endif
     tft.fillRect(0, eff_botY, botW, eff_botH, CLR_BG);
-    tft.setTextFont(2);
+    setFont(tft, FONT_BODY);
+
+    // Predict center text so we can clamp the filament name's right edge
+    // and avoid overlap with the layer/power readout (smooth fonts in v2.8
+    // are slightly wider than the previous bitmap font).
+    bool showPowerNow = tasmotaSettings.enabled && tasmotaOnline &&
+                        (tasmotaSettings.displayMode == 1 || altShowPower);
+    char centerBuf[20];
+    int16_t centerLeftX;
+    if (showPowerNow) {
+      snprintf(centerBuf, sizeof(centerBuf), "%.0fW", tasmotaGetWatts());
+      centerLeftX = botCx - 20;  // icon starts here (icon_lightning is 16px)
+    } else {
+      snprintf(centerBuf, sizeof(centerBuf), "%d/%d", s.layerNum, s.totalLayers);
+      centerLeftX = botCx - tft.textWidth(centerBuf) / 2;
+    }
 
     // Left: filament indicator (if AMS active) or WiFi signal
     // Dual nozzle (H2C/H2D): activeTray set from extruder.info[].snow per-nozzle
     if (s.ams.present && s.ams.activeTray < AMS_MAX_TRAYS) {
       AmsTray &t = s.ams.trays[s.ams.activeTray];
       if (t.present) {
-        tft.drawCircle(10, eff_botCY, 5, CLR_TEXT_DARK);
-        tft.fillCircle(10, eff_botCY, 4, t.colorRgb565);
+        int16_t bx = drawBatteryPrefix(eff_botCY);
+        tft.drawCircle(10 + bx, eff_botCY, 5, CLR_TEXT_DARK);
+        tft.fillCircle(10 + bx, eff_botCY, 4, t.colorRgb565);
         tft.setTextDatum(ML_DATUM);
         tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
-        tft.drawString(t.type, 19, eff_botCY);
+        drawStringClipped(t.type, 19 + bx, eff_botCY, centerLeftX - 3 - (19 + bx));
       } else {
         drawWifiSignalIndicator(s, eff_botCY);
       }
     } else if (s.ams.vtPresent && s.ams.activeTray == 254) {
-      tft.drawCircle(10, eff_botCY, 5, CLR_TEXT_DARK);
-      tft.fillCircle(10, eff_botCY, 4, s.ams.vtColorRgb565);
+      int16_t bx = drawBatteryPrefix(eff_botCY);
+      tft.drawCircle(10 + bx, eff_botCY, 5, CLR_TEXT_DARK);
+      tft.fillCircle(10 + bx, eff_botCY, 4, s.ams.vtColorRgb565);
       tft.setTextDatum(ML_DATUM);
       tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
-      tft.drawString(s.ams.vtType, 19, eff_botCY);
+      drawStringClipped(s.ams.vtType, 19 + bx, eff_botCY, centerLeftX - 3 - (19 + bx));
     } else {
       drawWifiSignalIndicator(s, eff_botCY);
     }
 
-    // Center: power (if Tasmota active) or layer count
-    bool showPowerNow = tasmotaSettings.enabled && tasmotaOnline &&
-              (tasmotaSettings.displayMode == 1 || altShowPower);
+    // Center: power (if Tasmota active) or layer count (centerBuf preformatted above)
     if (showPowerNow) {
       drawIcon16(tft, botCx - 20, eff_botCY - 8, icon_lightning, CLR_YELLOW);
-      char wBuf[8];
-      snprintf(wBuf, sizeof(wBuf), "%.0fW", tasmotaGetWatts());
       tft.setTextDatum(ML_DATUM);
       tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
-      tft.drawString(wBuf, botCx - 2, eff_botCY);
+      tft.drawString(centerBuf, botCx - 2, eff_botCY);
     } else {
       tft.setTextDatum(MC_DATUM);
       tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
-      char layerBuf[20];
-      snprintf(layerBuf, sizeof(layerBuf), "L%d/%d", s.layerNum, s.totalLayers);
-      tft.drawString(layerBuf, botCx, eff_botCY);
+      tft.drawString(centerBuf, botCx, eff_botCY);
     }
 
     // Right: door status (if sensor present) or speed mode
@@ -2433,7 +2976,7 @@ static void drawFinished() {
 
     // Printer name (left)
     tft.setTextDatum(ML_DATUM);
-    tft.setTextFont(2);
+    setFont(tft, FONT_BODY);
     tft.setTextColor(CLR_TEXT, hdrBg);
     const char *name = (p.config.name[0] != '\0') ? p.config.name : "Printer";
     tft.drawString(name, LY_HDR_NAME_X, LY_HDR_CY);
@@ -2441,7 +2984,7 @@ static void drawFinished() {
     // FINISH badge (right)
     tft.setTextDatum(MR_DATUM);
     tft.setTextColor(CLR_GREEN, hdrBg);
-    tft.setTextFont(2);
+    setFont(tft, FONT_BODY);
     tft.fillCircle(scrW - LY_HDR_BADGE_RX - tft.textWidth("FINISH") - 10, LY_HDR_CY, 4, CLR_GREEN);
     tft.drawString("FINISH", scrW - LY_HDR_BADGE_RX, LY_HDR_CY);
 
@@ -2472,14 +3015,14 @@ static void drawFinished() {
   if (forceRedraw  ) {
     tft.setTextDatum(MC_DATUM);
     tft.setTextColor(CLR_GREEN, CLR_BG);
-    tft.setTextFont(4);
+    setFont(tft, FONT_LARGE);
     tft.drawString("Print Complete!", cx, finTextY);
   }
 
   // === File name ===
   if (forceRedraw  ) {
     tft.setTextDatum(MC_DATUM);
-    tft.setTextFont(2);
+    setFont(tft, FONT_BODY);
     tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
     if (s.subtaskName[0] != '\0') {
       // Trim to canvas width (font 2 ~9px/char nominal). 25 chars suited 240
@@ -2515,7 +3058,7 @@ static void drawFinished() {
       char kwhBuf[16];
       snprintf(kwhBuf, sizeof(kwhBuf), "%.3f kWh", finishKwh);
       tft.setTextDatum(ML_DATUM);
-      tft.setTextFont(2);
+      setFont(tft, FONT_BODY);
       tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
       tft.drawString(kwhBuf, cx - 14, kwhY);
     }
@@ -2562,7 +3105,8 @@ static void drawFinished() {
   // === Bottom status bar ===
   bool waitingForDoor = dpSettings.doorAckEnabled && s.doorSensorPresent && !s.doorAcknowledged;
   float finCurWatts = tasmotaGetWatts();
-  bool finBottomChanged = forceRedraw ||
+  bool finBatChanged = batteryStateChanged();
+  bool finBottomChanged = finBatChanged || forceRedraw ||
               (waitingForDoor != prevWaitingForDoor) ||
               (s.doorSensorPresent && s.doorOpen != prevState.doorOpen) ||
               (tasmotaActiveHere != prevFinTasmotaOnline) ||
@@ -2570,18 +3114,13 @@ static void drawFinished() {
   if (finBottomChanged  ) {
     prevWaitingForDoor = waitingForDoor;
     tft.fillRect(0, eff_finBotY, scrW, eff_finBotH, CLR_BG);
-    tft.setTextFont(1);
+    setFont(tft, FONT_SMALL);
     if (waitingForDoor) {
       tft.setTextDatum(MC_DATUM);
       tft.setTextColor(CLR_ORANGE, CLR_BG);
       tft.drawString("Open door to dismiss", cx, eff_finWifiY);
     } else {
-      drawIcon16(tft, 4, eff_finWifiY - 8, icon_wifi, CLR_TEXT_DIM);
-      tft.setTextDatum(ML_DATUM);
-      tft.setTextColor(CLR_TEXT_DIM, CLR_BG);
-      char wifiBuf[12];
-      snprintf(wifiBuf, sizeof(wifiBuf), "%ddBm", s.wifiSignal);
-      tft.drawString(wifiBuf, 22, eff_finWifiY);
+      drawWifiSignalIndicator(s, eff_finWifiY);
 
       if (tasmotaActiveHere) {
         drawIcon16(tft, cx - 20, eff_finWifiY - 8, icon_lightning, CLR_YELLOW);
@@ -2596,7 +3135,7 @@ static void drawFinished() {
     if (s.doorSensorPresent) {
       uint16_t clr = s.doorOpen ? CLR_ORANGE : CLR_GREEN;
       tft.setTextDatum(MR_DATUM);
-      tft.setTextFont(1);
+      setFont(tft, FONT_SMALL);
       tft.setTextColor(clr, CLR_BG);
       tft.drawString("Door", scrW - 20, eff_finWifiY);
       drawIcon16(tft, scrW - 18, eff_finWifiY - 8,
