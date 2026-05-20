@@ -610,9 +610,10 @@ void drawTempGauge(lgfx::LovyanGFX& tft, int16_t cx, int16_t cy, int16_t radius,
 
   // Build display strings
   char tempBuf[12], targetBuf[12];
-  snprintf(tempBuf, sizeof(tempBuf), "%.0f", current);
+  snprintf(tempBuf, sizeof(tempBuf), "%.0f°", current);
   bool hasTarget = (target > 0.5f);
-  if (hasTarget) snprintf(targetBuf, sizeof(targetBuf), "/%.0f", target);
+  if (hasTarget)
+	  snprintf(targetBuf, sizeof(targetBuf), "/%.0f°", target);
   else targetBuf[0] = '\0';
 
   // Only clear center + redraw text when displayed string actually changes
@@ -620,8 +621,12 @@ void drawTempGauge(lgfx::LovyanGFX& tft, int16_t cx, int16_t cy, int16_t radius,
     clearGaugeCenter(tft, cx, cy, radius, thickness);
 
     tft.setTextDatum(MC_DATUM);
-    setFont(tft, FONT_LARGE);
-    tft.setTextColor(valColor);
+	if (current < 200)
+		setFont(tft, FONT_LARGE);
+	else
+		setFont(tft, FONT_BODY);
+	// setFont(tft, FONT_LARGE);
+	tft.setTextColor(valColor);
     tft.drawString(tempBuf, cx, hasTarget ? (cy - 4) : cy);
 
     if (hasTarget) {
@@ -670,16 +675,20 @@ void drawFanGauge(lgfx::LovyanGFX& tft, int16_t cx, int16_t cy, int16_t radius,
 
   // Build display string
   char buf[8];
-  snprintf(buf, sizeof(buf), "%d", percent);
+  snprintf(buf, sizeof(buf), "%d%%", percent);
 
   // Only clear center + redraw text when displayed value actually changes
   if (gaugeTextChanged(cx, cy, buf, "", forceRedraw)) {
     clearGaugeCenter(tft, cx, cy, radius, thickness);
 
     tft.setTextDatum(MC_DATUM);
-    setFont(tft, FONT_LARGE);
-    tft.setTextColor(valColor);
-    tft.drawString(buf, cx, cy);
+	if (percent < 100)
+		setFont(tft, FONT_LARGE);
+	else
+		setFont(tft, FONT_BODY);
+	// setFont(tft, FONT_LARGE);
+	tft.setTextColor(valColor);
+	tft.drawString(buf, cx, cy);
 
     bool sm = dispSettings.smallLabels;
     setFont(tft, sm ? FONT_SMALL : FONT_BODY);

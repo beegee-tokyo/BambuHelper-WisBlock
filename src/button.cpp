@@ -68,6 +68,7 @@ static void keyIntHandle(void)
   static bool lastRaw = false;
   static bool stableState = false;
   static unsigned long lastChangeMs = 0;
+static unsigned long pressStartMs = 0;
   static const unsigned long DEBOUNCE_MS = 50;
 
   void initButton() {
@@ -150,6 +151,7 @@ static void keyIntHandle(void)
 	  lastRaw = false;
 	  stableState = false;
 	  lastChangeMs = 0;
+  pressStartMs = 0;
   }
 
 bool wasButtonPressed() {
@@ -211,8 +213,20 @@ bool wasButtonPressed() {
   bool result = false;
   if (raw && !stableState) {
     result = true;
+    pressStartMs = millis();
+  } else if (!raw && stableState) {
+    pressStartMs = 0;
   }
   stableState = raw;
 
   return result;
+}
+
+bool isButtonHeld() {
+  return stableState;
+}
+
+uint32_t buttonHoldDurationMs() {
+  if (!stableState || pressStartMs == 0) return 0;
+  return (uint32_t)(millis() - pressStartMs);
 }

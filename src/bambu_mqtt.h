@@ -16,6 +16,7 @@ struct MqttDiag {
   uint16_t recoveryFinish;   // recovery: stale FINISH state
   uint16_t recoveryIdle;     // recovery: stale idle / UNKNOWN bootstrap
   uint16_t recoveryIdleHot;  // recovery: IDLE state but heater targets non-zero
+  uint16_t recoveryFinishHot;// recovery: FINISH state with armed cold->hot target transition
   uint16_t recoveryFailed;   // recovery: stuck in FAILED on cloud
   bool     tcpOk;           // last TCP reachability result
   unsigned long lastAttemptMs; // millis() of last attempt
@@ -34,6 +35,7 @@ enum PushallReason : uint8_t {
   PUSHALL_RECOVERY_FINISH,
   PUSHALL_RECOVERY_IDLE,
   PUSHALL_RECOVERY_IDLE_HOT,
+  PUSHALL_RECOVERY_FINISH_HOT,
   PUSHALL_RECOVERY_FAILED,
   PUSHALL_MANUAL
 };
@@ -53,7 +55,7 @@ const char* pushallReasonToString(uint8_t reason);
 
 void resetMqttBackoff();                 // reset backoff + force immediate reconnect
 void deferMqttReconnect();               // skip reconnect attempts for one iteration
-void requestCloudRefresh(uint8_t slot);  // manual pushall for cloud UNKNOWN/FAILED state (debounced)
+void requestCloudRefresh(uint8_t slot);  // manual pushall for cloud non-printing states (debounced)
 
 // Human-readable error string for PubSubClient rc
 const char* mqttRcToString(int rc);

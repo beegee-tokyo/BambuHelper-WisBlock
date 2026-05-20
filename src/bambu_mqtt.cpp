@@ -32,6 +32,8 @@ struct MqttConn {
   bool wasConnected;              // track connected->disconnected transitions for logging
   unsigned long stalePushallSentMs;  // when recovery pushall was sent on stale detection
   unsigned long lastRecoveryResolvedMs;  // when last recovery resolved (cooldown timer)
+  bool hotFinishArmed;       // FINISH cycle observed cold targets at least once
+  bool hotFinishHintConsumed;// FINISH-hot recovery pushall already sent this cycle
 };
 
 static MqttConn conns[MAX_ACTIVE_PRINTERS];
@@ -85,6 +87,7 @@ const char* pushallReasonToString(uint8_t reason) {
     case PUSHALL_RECOVERY_FINISH:    return "Recovery (Finish)";
     case PUSHALL_RECOVERY_IDLE:      return "Recovery (Idle)";
     case PUSHALL_RECOVERY_IDLE_HOT:  return "Recovery (Idle/Hot)";
+    case PUSHALL_RECOVERY_FINISH_HOT:return "Recovery (Finish/Hot)";
     case PUSHALL_RECOVERY_FAILED:    return "Recovery (Failed)";
     case PUSHALL_MANUAL:             return "Manual";
     case PUSHALL_NONE:
@@ -200,6 +203,7 @@ static bool requestPushall(MqttConn& c, PushallReason reason) {
     case PUSHALL_RECOVERY_FINISH:    c.diag.recoveryFinish++;   break;
     case PUSHALL_RECOVERY_IDLE:      c.diag.recoveryIdle++;     break;
     case PUSHALL_RECOVERY_IDLE_HOT:  c.diag.recoveryIdleHot++;  break;
+    case PUSHALL_RECOVERY_FINISH_HOT:c.diag.recoveryFinishHot++;break;
     case PUSHALL_RECOVERY_FAILED:    c.diag.recoveryFailed++;   break;
     default: break;
   }
@@ -304,17 +308,32 @@ static void parseMqttPayload(byte* payload, unsigned int length, BambuState& s, 
   uint8_t pendingSnowTrayIdx = 0;
   bool    hasSnowData = false;       // true when snow was parsed for active nozzle
 
-  // H2D/H2C dual nozzle: parse extruder directly from raw payload
-  // (bypasses ArduinoJson filter which strips it due to deep nesting)
+  // Extruder block: parse directly from raw payload (bypasses ArduinoJson
+  // filter which strips it due to deep nesting under print.device).
+  // - info.size() >= 2: dual nozzle (H2C/H2D) - per-nozzle temp + snow
+  // - info.size() == 1: single nozzle - snow only (P-series, X-series and
+  //   newer A-series firmware send snow to track the currently-feeding tray
+  //   during multi-color prints, distinct from tray_now which reports the
+  //   "logically loaded" tray)
   const char* extPos = (const char*)memmem(payload, length, "\"extruder\":", 11);
   if (extPos) {
     const char* objStart = extPos + 11;  // skip past "extruder":
     // Skip whitespace
     while (objStart < payloadEnd && (*objStart == ' ' || *objStart == '\t')) objStart++;
     if (objStart < payloadEnd && *objStart == '{') {
+      // Find matching closing brace (mirrors the AMS parser pattern below)
+      int depth = 0;
+      const char* end = objStart;
+      while (end < payloadEnd) {
+        if (*end == '{') depth++;
+        else if (*end == '}') { depth--; if (depth == 0) { end++; break; } }
+        end++;
+      }
+      if (depth == 0) {
       JsonDocument extDoc;
-      if (!deserializeJson(extDoc, objStart, (size_t)(payloadEnd - objStart))) {
+        if (!deserializeJson(extDoc, objStart, (size_t)(end - objStart))) {
         JsonArray info = extDoc["info"];
+
         if (info.size() >= 2) {
           if (!s.dualNozzle) Serial.println("MQTT: dual nozzle DETECTED (H2D/H2C)");
           s.dualNozzle = true;
@@ -324,26 +343,27 @@ static void parseMqttPayload(byte* payload, unsigned int length, BambuState& s, 
             s.activeNozzle = (st >> 4) & 0x0F;
             if (s.activeNozzle > 1) s.activeNozzle = 0;
           }
+          }
+          // Single-nozzle: s.activeNozzle stays at default 0.
 
+          // Snow + per-nozzle temp from extruder.info[].
+          // Temp is dual-nozzle only - single-nozzle gets it from print["nozzle_temper"].
           for (JsonObject entry : info) {
             if (!entry["id"].is<int>()) continue;
             uint8_t id = entry["id"].as<int>();
+            if (id != s.activeNozzle) continue;
 
-            // Extract snow (per-nozzle active tray) - defer normalization
-            // until after AMS units are parsed (need units[].id mapping)
             if (entry["snow"].is<unsigned int>()) {
               uint32_t snow = entry["snow"].as<unsigned int>();
               uint8_t amsIdx  = snow >> 8;
               uint8_t trayIdx = snow & 0x03;
               MQTT_LOG("nozzle[%d] snow=%u -> ams=%d tray=%d", id, snow, amsIdx, trayIdx);
-              if (id == s.activeNozzle) {
                 pendingSnowAmsId = amsIdx;
                 pendingSnowTrayIdx = trayIdx;
                 hasSnowData = true;
               }
-            }
 
-            if (id == s.activeNozzle && entry["temp"].is<unsigned int>()) {
+            if (s.dualNozzle && entry["temp"].is<unsigned int>()) {
               uint32_t packed = entry["temp"].as<unsigned int>();
               s.nozzleTemp   = (float)(packed & 0xFFFF);
               s.nozzleTarget = (float)(packed >> 16);
@@ -401,7 +421,11 @@ static void parseMqttPayload(byte* payload, unsigned int length, BambuState& s, 
           }
           }
 
-          bool hasExplicitTrayNow = amsDoc["tray_now"].is<const char*>() && !s.dualNozzle;
+          // tray_now is parsed regardless of nozzle count - used as a fallback
+          // when snow is absent. Snow (extruder.info[].snow) takes priority in
+          // the activeTray block below since it tracks the currently-feeding
+          // tray on multi-color prints, while tray_now reports the "loaded" tray.
+          bool hasExplicitTrayNow = amsDoc["tray_now"].is<const char*>();
           uint8_t rawTrayNow = 255;
           if (hasExplicitTrayNow) rawTrayNow = atoi(amsDoc["tray_now"].as<const char*>());
 
@@ -485,8 +509,19 @@ static void parseMqttPayload(byte* payload, unsigned int length, BambuState& s, 
 
               if (tray["tray_type"].is<const char*>()) {
                 t.present = true;
-                if (tray["tray_color"].is<const char*>()) {
-                  const char* colorStr = tray["tray_color"].as<const char*>();
+                  const char* colorStr = nullptr;
+                  if (tray["tray_color"].is<const char*>())
+                    colorStr = tray["tray_color"].as<const char*>();
+                  // Fallback to cols[0] when tray_color is missing or too short.
+                  // A1 AMS Lite is reported to populate cols even when tray_color
+                  // is absent on some firmware revisions.
+                  if ((!colorStr || strlen(colorStr) < 6) &&
+                      tray["cols"].is<JsonArray>() &&
+                      tray["cols"].size() > 0 &&
+                      tray["cols"][0].is<const char*>()) {
+                    colorStr = tray["cols"][0].as<const char*>();
+                  }
+                  if (colorStr) {
                   t.colorRgb565 = bambuColorToRgb565(colorStr);
                   MQTT_LOG("AMS tray %d color: \"%s\" -> 0x%04X", idx, colorStr, t.colorRgb565);
                 }
@@ -497,7 +532,18 @@ static void parseMqttPayload(byte* payload, unsigned int length, BambuState& s, 
                 else
                   name = tray["tray_type"].as<const char*>();
                 if (name) strlcpy(t.type, name, sizeof(t.type));
-                  t.remain = tray["remain"].is<int>() ? (int8_t)tray["remain"].as<int>() : -1;
+                  int8_t rawRemain = tray["remain"].is<int>() ? (int8_t)tray["remain"].as<int>() : -1;
+                  // AMS Lite (A1) reports remain=0 on uncalibrated/third-party
+                  // spools, which blanks the colored fill in the bar renderer.
+                  // Treat 0 as "unknown" when the spool has no calibrated
+                  // weight (tray_weight=="0") - real RFID spools always have a
+                  // non-zero weight.
+                  if (rawRemain == 0 &&
+                      tray["tray_weight"].is<const char*>() &&
+                      strcmp(tray["tray_weight"].as<const char*>(), "0") == 0) {
+                    rawRemain = -1;
+                  }
+                  t.remain = rawRemain;
               } else {
                 t.present = false;
                 t.type[0] = '\0';
@@ -511,28 +557,32 @@ static void parseMqttPayload(byte* payload, unsigned int length, BambuState& s, 
           }
 
           // --- activeTray normalization (after units are populated) ---
-          // Snow special values (from pushall_dump.json):
-          //   0xFFFF (65535) -> amsIdx=255 = no active tray
-          //   0xFEFF (65279) -> amsIdx=254 = external spool
-          // These mirror tray_now sentinels: 255=none, 254=external.
-          if (s.dualNozzle) {
+          // Priority: snow (currently-feeding tray) > tray_now (logically loaded).
+          // During multi-color prints these diverge - snow follows feeder swaps,
+          // tray_now stays on the print's primary filament. Matches Bambu Handy /
+          // slicer behavior. When snow is absent, tray_now is the only signal.
+          //
+          // Sentinels (snow and tray_now both use):
+          //   255 = no active tray
+          //   254 = external spool
+          if (hasSnowData) {
             if (pendingSnowAmsId == 254) {
-              s.ams.activeTray = 254;  // external spool sentinel
+              s.ams.activeTray = 254;
               MQTT_LOG("activeTray: snow external spool (amsId=254)");
-            } else if (pendingSnowAmsId != 255) {
+            } else if (pendingSnowAmsId == 255) {
+              s.ams.activeTray = 255;
+              MQTT_LOG("activeTray: snow reports no active tray");
+            } else {
               uint8_t normalized = normalizeTrayIndex(s.ams, pendingSnowAmsId, pendingSnowTrayIdx);
               if (normalized != 255) {
                 s.ams.activeTray = normalized;
+                MQTT_LOG("activeTray: snow ams=%d tray=%d -> normalized=%d",
+                         pendingSnowAmsId, pendingSnowTrayIdx, s.ams.activeTray);
               } else {
                 MQTT_LOG("activeTray: snow ams=%d tray=%d unresolved - keeping cached=%d",
                          pendingSnowAmsId, pendingSnowTrayIdx, s.ams.activeTray);
               }
-            } else if (hasSnowData) {
-              // snow was present but amsIdx==255 means "no active tray"
-              s.ams.activeTray = 255;
-              MQTT_LOG("activeTray: snow reports no active tray");
             }
-            // else: no extruder/snow data in this message - keep cached activeTray
           } else if (hasExplicitTrayNow) {
             if (rawTrayNow == 254) {
               s.ams.activeTray = 254;  // external spool sentinel
@@ -571,8 +621,17 @@ static void parseMqttPayload(byte* payload, unsigned int length, BambuState& s, 
         if (!deserializeJson(vtDoc, v, (size_t)(payloadEnd - v))) {
           if (vtDoc["tray_type"].is<const char*>()) {
             s.ams.vtPresent = true;
+            const char* vtColorStr = nullptr;
             if (vtDoc["tray_color"].is<const char*>())
-              s.ams.vtColorRgb565 = bambuColorToRgb565(vtDoc["tray_color"].as<const char*>());
+              vtColorStr = vtDoc["tray_color"].as<const char*>();
+            if ((!vtColorStr || strlen(vtColorStr) < 6) &&
+                vtDoc["cols"].is<JsonArray>() &&
+                vtDoc["cols"].size() > 0 &&
+                vtDoc["cols"][0].is<const char*>()) {
+              vtColorStr = vtDoc["cols"][0].as<const char*>();
+            }
+            if (vtColorStr)
+              s.ams.vtColorRgb565 = bambuColorToRgb565(vtColorStr);
             const char* name = nullptr;
             if (vtDoc["tray_sub_brands"].is<const char*>() &&
                 strlen(vtDoc["tray_sub_brands"].as<const char*>()) > 0)
@@ -720,17 +779,32 @@ static void parseMqttPayload(byte* payload, unsigned int length, BambuState& s, 
     s.totalLayers = print["total_layer_num"].as<int>();
   }
 
-  // Fan speeds: prefer fan_gear (packed PWM 0-255 per fan, ~0.4% precision) over the
-  // *_fan_speed fields (4-bit 0-15, ~6.67% precision) so the displayed value matches the
-  // printer's own LCD. Fallback to the legacy fields when fan_gear is missing or the byte
-  // is 0 while the legacy field is non-zero (delta-push without fan_gear).
+  // Fan speeds: prefer fan_gear (packed raw PWM 0-255 per fan) over the legacy
+  // *_fan_speed fields (4-bit 0-15). The dispSettings.fanMatchPrinter toggle
+  // controls how the raw value is rendered:
+  //   - true  : round to nearest 10% (BambuStudio FanControl.cpp: round(pwm/25.5))
+  //             which is what the printer's own LCD shows.
+  //   - false : 1% precision from fan_gear, exposing real PWM jitter.
+  // Heatbreak fan is not packed in fan_gear, so it stays on the 0-15 path.
   auto parseFan = [](JsonVariant v) -> int {
     if (v.is<int>()) return v.as<int>();
     if (v.is<const char*>()) return atoi(v.as<const char*>());
     return -1;
   };
   auto pwmToPct = [](uint8_t b) -> uint8_t {
+    if (dispSettings.fanMatchPrinter) {
+      // round(pwm * 10 / 255) * 10  -> 0,10,20,...,100
+      return (uint8_t)((((uint16_t)b * 10 + 127) / 255) * 10);
+    }
     return (uint8_t)(((uint16_t)b * 100 + 127) / 255);
+  };
+  auto legacyToPct = [](int v) -> uint8_t {
+    if (v < 0) v = 0; if (v > 15) v = 15;
+    if (dispSettings.fanMatchPrinter) {
+      // Match BambuStudio legacy chain: floor(v / 1.5) * 10
+      return (uint8_t)(((v * 2) / 3) * 10);
+    }
+    return (uint8_t)((v * 100) / 15);
   };
 
   bool gearPresent = print["fan_gear"].is<unsigned int>() || print["fan_gear"].is<int>();
@@ -747,7 +821,7 @@ static void parseMqttPayload(byte* payload, unsigned int length, BambuState& s, 
   if (gearPresent) {
     corePrintData = true; s.coolingFanPct = pwmToPct((uint8_t)(gear & 0xFF));
   } else if (!s.fanGearSeen && oldVal >= 0) {
-    corePrintData = true; s.coolingFanPct = (oldVal * 100) / 15;
+    corePrintData = true; s.coolingFanPct = legacyToPct(oldVal);
   } else if (oldVal >= 0) {
     corePrintData = true;  // received legacy update on a gear-supporting printer; ignore value
   }
@@ -756,7 +830,7 @@ static void parseMqttPayload(byte* payload, unsigned int length, BambuState& s, 
   if (gearPresent) {
     corePrintData = true; s.auxFanPct = pwmToPct((uint8_t)((gear >> 8) & 0xFF));
   } else if (!s.fanGearSeen && oldVal >= 0) {
-    corePrintData = true; s.auxFanPct = (oldVal * 100) / 15;
+    corePrintData = true; s.auxFanPct = legacyToPct(oldVal);
   } else if (oldVal >= 0) {
     corePrintData = true;
   }
@@ -765,14 +839,15 @@ static void parseMqttPayload(byte* payload, unsigned int length, BambuState& s, 
   if (gearPresent) {
     corePrintData = true; s.chamberFanPct = pwmToPct((uint8_t)((gear >> 16) & 0xFF));
   } else if (!s.fanGearSeen && oldVal >= 0) {
-    corePrintData = true; s.chamberFanPct = (oldVal * 100) / 15;
+    corePrintData = true; s.chamberFanPct = legacyToPct(oldVal);
   } else if (oldVal >= 0) {
     corePrintData = true;
   }
 
-  // heatbreak fan is not packed in fan_gear - keep legacy 0-15 conversion
+  // heatbreak fan is not packed in fan_gear - stays on the 0-15 legacy scale either way.
+  // legacyToPct still honours fanMatchPrinter so all four fan gauges round consistently.
   oldVal = parseFan(print["heatbreak_fan_speed"]);
-  if (oldVal >= 0) { corePrintData = true; s.heatbreakFanPct = (oldVal * 100) / 15; }
+  if (oldVal >= 0) { corePrintData = true; s.heatbreakFanPct = legacyToPct(oldVal); }
 
   // Non-core fields: wifi_signal, spd_lvl, stat - don't count as core print data
   if (print["wifi_signal"].is<const char*>())
@@ -1101,6 +1176,14 @@ static void handleConn(MqttConn& c) {
   bool recoveryCooldown = cloud &&
       c.lastRecoveryResolvedMs > 0 && millis() - c.lastRecoveryResolvedMs < 300000;
 
+  // Re-arm hot-FINISH detection whenever state has left FINISH. The FINISH->RUNNING
+  // transition goes through the s.printing branch below, which returns before any
+  // per-state catch-all could fire — so the reset has to live up here.
+  if (s.gcodeStateId != GCODE_FINISH) {
+    c.hotFinishArmed = false;
+    c.hotFinishHintConsumed = false;
+  }
+
   // --- Active print: core data freshness ---
     if (s.printing) {
     unsigned long printStaleMs = cloud ? BAMBU_PRINT_STALE_TIMEOUT : BAMBU_STALE_TIMEOUT;
@@ -1163,6 +1246,29 @@ static void handleConn(MqttConn& c) {
     // FINISH is enough.  Resetting would create an infinite loop every
     // finishHoldMs minutes, risking cloud error 49.
     // stalePushallSentMs resets naturally when state leaves FINISH.
+
+    // Hot-target recovery (mirrors the IDLE/Hot branch). If cloud forwards
+    // target deltas but drops the gcode_state delta, our cached state stays
+    // FINISH while heater targets jump for the new print. ARMING is a pure
+    // state observation - it must NOT be throttle-gated, otherwise the device
+    // can sit through the throttle window with targets briefly cold, miss the
+    // arming, and then never recover when targets go hot. The pushall send
+    // remains gated by throttle/cooldown.
+    if (cloud && connAlive) {
+      bool coldFinish = (s.nozzleTarget <= 50.0f && s.bedTarget <= 30.0f);
+      bool hotFinish  = (s.nozzleTarget > 50.0f || s.bedTarget > 30.0f);
+
+      if (coldFinish) c.hotFinishArmed = true;
+
+      if (c.hotFinishArmed && hotFinish && !c.hotFinishHintConsumed &&
+          !cloudPushallThrottled && !recoveryCooldown) {
+        MQTT_LOG("[%d] hot FINISH (nT=%.0f bT=%.0f) - recovery pushall",
+                 c.slotIndex, s.nozzleTarget, s.bedTarget);
+        esp_task_wdt_reset();
+        if (requestPushall(c, PUSHALL_RECOVERY_FINISH_HOT))
+          c.hotFinishHintConsumed = true;
+      }
+    }
 
   // --- Idle cloud: connection freshness + hot-target staleness ---
   } else if (isConnected && cloud && s.gcodeStateId == GCODE_IDLE) {
@@ -1362,13 +1468,14 @@ void requestCloudRefresh(uint8_t slot) {
   BambuState& s = printers[slot].state;
   if (!isCloudMode(cfg.mode)) return;
   if (!c.mqtt || !c.mqtt->connected()) return;
-  // Manual refresh is useful for states where cloud goes silent: UNKNOWN
-  // (printer just came online, no full status yet) and FAILED (after a
-  // failed print, cloud stops pushing state changes until something on the
-  // backend nudges it - e.g. opening Bambu Handy).
-  if (s.gcodeStateId != GCODE_UNKNOWN &&
-      s.gcodeStateId != GCODE_FAILED) return;
-  // Debounce: at most once per 5 seconds
+  // Manual refresh is the user's explicit escape hatch for any non-printing
+  // cloud state where the broker may have gone silent: UNKNOWN (printer just
+  // online), FAILED (cloud stops pushing after failed print), FINISH (cloud
+  // can drop state delta when keep-print-screen leaves us cached as FINISH),
+  // IDLE. Never disturb an active print - the live stream is already flowing.
+  if (s.printing) return;
+  // Debounce: at most once per 5 seconds. Intentionally exempt from the
+  // 2-min cloud recovery throttle because this is user-initiated.
   static unsigned long lastRefreshMs = 0;
   if (lastRefreshMs > 0 && millis() - lastRefreshMs < 5000) return;
   lastRefreshMs = millis();

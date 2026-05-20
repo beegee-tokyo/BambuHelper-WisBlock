@@ -1,11 +1,49 @@
 #pragma once
 #include <stdint.h>
 
+// Lifecycle
 void  tasmotaInit();
-float tasmotaGetWatts();                     // current watts, -1 if unavailable
-bool  tasmotaIsOnline();                     // true if data received within last 90s
-bool  tasmotaIsActiveForSlot(uint8_t slot);  // online AND assigned to given display slot
-void  tasmotaMarkPrintStart();               // call when print begins; records Today kWh baseline
-void  tasmotaMarkPrintEnd();                 // call when print ends; freezes session kWh
-float tasmotaGetPrintKwhUsed();              // frozen session kWh (Today delta), -1 if unavailable
-bool  tasmotaKwhChanged();                   // true (once) when kWh value has updated
+
+// Mapping helpers
+//   tasmotaPlugForPrinterSlot(slot)  - STRICT: returns the plug index that
+//     should record print-state changes for printer `slot`, or 0xFF if none.
+//     On single-plug builds with assignedSlot==255 ("Any"), only slot 0 is
+//     considered canonical (avoids double-marking under dualPrinterUnsafe).
+//   tasmotaPrinterSlotForPlug(plug)  - inverse, used by auto-off.
+uint8_t tasmotaPlugForPrinterSlot(uint8_t slot);
+uint8_t tasmotaPrinterSlotForPlug(uint8_t plug);
+
+// Display-side accessors. These keep all plug-mapping policy inside tasmota.cpp.
+//   tasmotaIsActiveForSlot - LOOSE visibility + strict freshness gate
+//   tasmotaGetWattsForSlot - LOOSE mapping; 0 when not active
+//   tasmotaDisplayModeForSlot - LOOSE mapping; defaults to 0 (alternate)
+//   tasmotaGetPrintKwhUsedForSlot - STRICT mapping; -1 when no print recorded
+//   tasmotaTariffForSlot - returns the global tariff (slot ignored)
+//   tasmotaCurrencySymbol - global UTF-8 currency symbol
+bool        tasmotaIsActiveForSlot(uint8_t slot);
+float       tasmotaGetWattsForSlot(uint8_t slot);
+uint8_t     tasmotaDisplayModeForSlot(uint8_t slot);
+float       tasmotaGetPrintKwhUsedForSlot(uint8_t slot);
+float       tasmotaTariffForSlot(uint8_t slot);
+const char* tasmotaCurrencySymbol();
+
+// Latched "kWh value changed since last call" signal, scoped to a printer slot
+// (uses strict mapping). Returns true (once) when the strict-owner plug's
+// printUsedKwh has changed.
+bool tasmotaKwhChangedForSlot(uint8_t slot);
+
+// State-change API - called from main.cpp's per-slot transition handler.
+// Use tasmotaPlugForPrinterSlot(slot) to derive the plug index.
+void tasmotaMarkPrintStart(uint8_t plug);
+void tasmotaMarkPrintEnd(uint8_t plug);
+
+// Stats accessor used by web /power/stats. Returns NaN-like sentinels (-1) for
+// fields the plug has not reported yet.
+struct TasmotaPlugStatsView {
+  bool  online;
+  float watts;
+  float todayKwh;
+  float totalKwh;
+  float printUsedKwh;
+};
+void tasmotaGetStats(uint8_t plug, TasmotaPlugStatsView* out);

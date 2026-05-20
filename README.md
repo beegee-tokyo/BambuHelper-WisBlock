@@ -13,6 +13,8 @@ Connects to your printer via MQTT over TLS and displays a real-time dashboard wi
 
 For additional supported boards, please check [@Keralots BambuHelper repo](https://github.com/Keralots/BambuHelper).
 
+> **One-click setup:** as of v3.2, you can flash your board and configure WiFi entirely from the browser at **[keralots.github.io/BambuHelper](https://keralots.github.io/BambuHelper/)** - no PlatformIO, no esptool, no captive portal hopping.
+
 ### Supported Printers
 
 | Connection Mode | Printers | How it connects |
@@ -50,23 +52,28 @@ Check [@Keralots BambuHelper repo](https://github.com/Keralots/BambuHelper) for 
 
 ## Features
 
+- **One-click web flasher** - install firmware directly from [keralots.github.io/BambuHelper](https://keralots.github.io/BambuHelper/) in desktop Chrome/Edge - no PlatformIO, no esptool, no flash offsets
+- **In-browser WiFi setup (Improv-Serial)** - on first boot the install dialog asks for your WiFi over USB; no captive-portal switching needed (AP fallback still available)
 - **Live dashboard** - progress arc, temperature gauges, fan speed, layer count, time remaining
 - **H2-style LED progress bar** - full-width glowing bar inspired by Bambu H2 series
 - **Anti-aliased arc gauges** - smooth nozzle and bed temperature arcs with color zones
+- **AMS visualization** - per-tray colors, drying status, plus an optional bottom-row strip view on 240x240 screens, configurable per printer
+- **Tasmota power monitoring** - per-printer smart plug with live wattage, per-print kWh + cost, and optional auto-off after print finishes (with hot-end gate)
 - **Animations** - loading spinner, progress pulse, completion celebration
-- **Web config portal** - dark-themed settings page for WiFi, network, printer, display, power, and buzzer settings
+- **Web config portal** - dark-themed settings page for WiFi, network, printer, display, power, buzzer, and LED settings
 - **Network configuration** - DHCP or static IP, with optional IP display at startup
 - **Display auto-off** - configurable timeout after print completion, auto-off when printer is off
 - **NVS persistence** - all settings survive reboots
 - **Auto AP mode** - creates WiFi hotspot on first boot or when WiFi is lost
 - **Smart redraw** - only redraws changed UI elements for smooth performance
 - **Customizable gauge colors** - per-gauge arc/label/value colors with preset themes
-- **Multi-printer support** - monitor up to 2 printers simultaneously with auto-rotating display (ESP32-S3 only - CYD/C3 limited to 1 printer due to RAM)
+- **Multi-printer support** - monitor up to 2 printers simultaneously on full-RAM boards (ESP32-S3 family); CYD, TZT, and ESP32-C3 have an experimental opt-in 2-printer mode but default to 1 printer
 - **Smart rotation** - automatically shows the printing printer; cycles between both when both are printing
-- **Physical button** - optional push button or TTP223 touch sensor to cycle printers and wake display
-- **Optional buzzer** - passive buzzer notifications for print finished, connected, and error events
-- **OTA updates** - firmware can be updated from the web interface
-- **Additional board support** - CYD 240x320, Waveshare 2" 240x320, and ESP32-C3 240x240 builds are supported
+- **Physical button / touchscreen** - cycle printers and wake display via optional push button or TTP223, board-built-in buttons (Waveshare 1.54"), or the built-in capacitive touchscreens on CYD / TZT / Waveshare 2" / Waveshare 1.54"
+- **Optional LED** - PWM-driven status LED on a user-configurable pin; hold the button/touch to dim
+- **Optional buzzer** - passive buzzer notifications for print finished, connected, and error events; Waveshare 1.54" uses its built-in ES8311 audio codec instead
+- **OTA updates** - update firmware from the device's web interface (manual upload or one-click from GitHub Releases)
+- **Battery support (Waveshare 2" and 1.54")** - on-screen battery indicator, charging detection, hold-to-power-off
 - **Exponential backoff** - reconnect attempts to offline printers gradually slow down to conserve resources
 
 ## Hardware
@@ -111,12 +118,23 @@ The buzzer is completely optional. If you do not connect one, BambuHelper works 
 
 1. Download the latest firmware from [Releases](../../releases). **If you are flashing a new device for the first time**, use the file ending with **-Full** (for example `BambuHelper-esp32s3-v2.7-Full.bin`). The regular `-ota.bin` file is for OTA updates on devices that already have BambuHelper installed.
 2. Open [ESP Web Flasher](https://espressif.github.io/esptool-js/) in Chrome or Edge
-3. If you are flashing a **CYD**, set **Baudrate** to **115200** before clicking **Connect**. Two or more attempts may be needed - the first one will fail. This applies to **CYD only**.
+3. If you are flashing a **CYD** or **TZT L1435-2.4**, set **Baudrate** to **115200** before clicking **Connect**. Two or more attempts may be needed - the first one will fail. This applies to both CYD-shaped boards (they use a CH340 USB-Serial chip that does not tolerate high baud rates on first contact).
 4. Connect your ESP32 via USB
 5. Click **Connect** and select your device
 6. Set flash address to **0x0**
 7. Select the downloaded `.bin` file
 8. Click **Program**
+
+### Updating an Existing Device (OTA)
+
+Once you have BambuHelper running, you do not need to re-flash over USB to update. From the device's web interface:
+
+1. Open the device's IP in a browser
+2. Scroll to **Other** -> **OTA Update**
+3. Click **Check for updates** - the device queries GitHub Releases and, if a newer build is available, shows a one-click **Install Update** button that pulls the matching `*-ota.bin` straight from the release
+4. If you prefer to upload manually (e.g. a custom build), the same panel accepts a local `*-ota.bin` file via drag-and-drop
+
+The device reboots automatically once the update is written; the web page reloads when it comes back online.
 
 ### Build Files
 
@@ -130,6 +148,8 @@ The buzzer is completely optional. If you do not connect one, BambuHelper works 
 ### Configuration Guide
 
 [![Configuration Guide](https://img.youtube.com/vi/n2RdbeHTMz0/maxresdefault.jpg)](https://youtu.be/n2RdbeHTMz0) 
+
+> **If you used the web flasher**, steps 2-4 happen automatically in the install dialog (Configure WiFi step). The device joins your home WiFi straight away and the dialog gives you a link to its IP - jump to step 5. The AP captive-portal path below is the fallback when you skipped or timed out of the Configure WiFi dialog, or when you flashed via the generic ESP Web Flasher.
 
 1. **Flash** the firmware (see above)
 2. **Connect** to the `BambuHelper-XXXX` WiFi network (password: `bambu1234`)
@@ -155,7 +175,7 @@ The buzzer is completely optional. If you do not connect one, BambuHelper works 
 
 ### Getting a Cloud Token
 
-To use cloud mode, you need an access token from your Bambu Lab account. There are two ways to get it:
+To use cloud mode, you need an access token from your Bambu Lab account. The easiest way is to copy it from your browser cookies on https://bambulab.com (you must be logged in).
 
 **Using browser DevTools (Chrome / Edge):**
 1. Open https://bambulab.com and log in to your account
@@ -182,14 +202,38 @@ To use cloud mode, you need an access token from your Bambu Lab account. There a
 4. Find and copy the `token` value
 5. Paste it into BambuHelper's "Access Token" field
 
-**Using the Python helper script (recommended):**
-```bash
-pip install curl_cffi
-python tools/get_token.py
-```
-The script will prompt for your email, password, and 2FA code, then print the token. Copy and paste it into BambuHelper's web interface.
-
 > **Note:** The token is valid for approximately 3 months. When it expires, the ESP32 will fail to connect - simply repeat the process above to get a fresh token and paste it in the web interface. Make sure to select the correct **Server Region** (US/EU/CN) to match your Bambu account's region.
+
+**Optional: Companion Tool for one-click setup**
+
+If you'd rather skip the copy-paste flow entirely, the [Companion Tool](tools/DIAGNOSTICS-HOWTO.md) (`tools/BambuHelper-CompanionTool.exe` on Windows, `python tools/bambu_diag.py` on Mac/Linux) logs into your Bambu account, fetches your printer list, and pushes the token + serial straight to BambuHelper over your LAN - no copying, no pasting. Pick "Configure BambuHelper device" from its menu.
+
+> **Browser cookie token expires very quickly (after one session, on next reboot, etc.)?** Try the Companion Tool instead - tokens obtained that way tend to be more stable than browser cookies that get invalidated unexpectedly soon after extraction.
+
+### Custom Smooth Fonts
+
+BambuHelper embeds smooth fonts directly in the firmware as VLW tables in `PROGMEM`. The default font is **Inter** (Regular for small/body, Bold for large headings), shipped as TTF in `fonts/` and pre-converted to C headers in `include/fonts/`. Swapping the font means regenerating those headers and reflashing - there is no runtime upload, because the font lives in flash next to the code.
+
+Steps:
+
+1. Drop your `.ttf` files into `fonts/` (e.g. `MyFont-Regular.ttf`, `MyFont-Bold.ttf`).
+2. Edit the `FONTS` list in [`scripts/generate_vlw_fonts.py`](scripts/generate_vlw_fonts.py) - each entry is `(output_name, ttf_filename, pixel_size)`. Keep the three names `inter_10`, `inter_14`, `inter_19` unless you also rename the includes in `src/fonts.cpp`.
+3. Install the converter dependency once: `pip install freetype-py`.
+4. Regenerate the headers:
+```bash
+   python scripts/generate_vlw_fonts.py
+```
+5. Rebuild the firmware for your target:
+   ```bash
+   pio.exe run -e cyd
+   ```
+6. Flash the new `.pio/build/<env>/firmware.bin` over USB or push it OTA via the web UI's firmware update page.
+
+Tips:
+
+- Pick a font that renders well at small pixel sizes - thin or highly stylised faces will look smudged at 10-14 px. Sans-serif faces designed for UI work best.
+- Each VLW table grows roughly linearly with pixel size; the default Inter set is ~37 KiB total. Watch the flash usage line at the end of the build if you push to bigger sizes.
+- Only printable ASCII (0x20-0x7E) and the degree symbol (0xB0) are baked in. Add codepoints by editing `CHARSET` in the generator.
 
 ## Web Interface
 
@@ -262,39 +306,17 @@ The built-in web interface (accessible at the device's IP address) provides the 
 
 ## Display Power Management
 
-- After a print completes, the finish screen is shown for a configurable duration (default: 3 minutes), then either a digital clock is displayed or the screen turns off (configurable).
-- When the printer is powered off or disconnected, the display stays in its current state (clock or off).
-- When the printer comes back online or starts a new print, the display automatically wakes up.
-- The "Keep display always on" option overrides the auto-off behavior.
-- The "Show clock after print" option (enabled by default) shows time and date instead of turning off the display.
+The display is managed from the **Display** section of the web interface (see above for the full list of fields). In short:
 
-## Project Structure
-
-```
-include/
-  config.h              Pin definitions, colors, constants
-  bambu_state.h         Data structures (BambuState, PrinterConfig, ConnMode)
-src/
-  main.cpp              Setup/loop orchestrator
-  settings.cpp          NVS persistence (WiFi, network, printer, display, power, cloud token)
-  wifi_manager.cpp      WiFi STA + AP fallback, static IP support
-  web_server.cpp        Config portal (HTML embedded, token management)
-  bambu_mqtt.cpp        MQTT over TLS, delta merge (local + cloud broker)
-  bambu_cloud.cpp       Bambu Cloud helpers (region URLs, JWT userId extraction)
-  button.cpp            Physical button / touch sensor input
-  buzzer.cpp            Optional passive buzzer support
-  display_ui.cpp        Screen state machine
-  display_gauges.cpp    Arc gauges, progress bar, temp gauges
-  display_anim.cpp      Animations (spinner, pulse, dots)
-  clock_mode.cpp        Digital clock display (after print finishes)
-  icons.h               16x16 pixel-art icons
-tools/
-  get_token.py          Python helper to get Bambu Cloud token on PC
-```
+- After a print completes, the finish screen is shown for the configured number of minutes (default 3), then either a digital clock takes over or the display turns off.
+- When the printer goes offline (powered off or disconnected), the display stays in whatever state it was in - it does not flicker back to the connecting screen.
+- When the printer comes back online or starts a new print, the display wakes automatically.
+- **Keep display always on** overrides the auto-off behaviour.
+- **Show clock after print** (default on) chooses clock-over-off when the finish timer expires.
 
 ## Requirements
 
-- [PlatformIO](https://platformio.org/) (VS Code extension or CLI)
+- For flashing: a desktop browser (Chrome or Edge) is enough - use the [web flasher](https://keralots.github.io/BambuHelper/). [PlatformIO](https://platformio.org/) is only needed if you want to modify the firmware yourself.
 - **LAN mode:** Bambu Lab printer with LAN mode enabled, printer and ESP32 on the same local network
 - **Cloud mode:** Bambu Lab account, ESP32 with internet access
 
@@ -302,7 +324,7 @@ tools/
 
 BambuHelper supports monitoring up to 2 printers simultaneously via dual MQTT connections.
 
-> **CYD and ESP32-C3 boards are limited to 1 printer.** Each MQTT connection requires ~85 KB of RAM (TLS session + message buffer), and the classic ESP32 / C3 do not have enough free heap for two simultaneous connections. The web interface on these boards hides the second printer tab and shows a notice. Use an ESP32-S3 board if you need two printers.
+> **Low-RAM boards default to 1 printer.** Each MQTT connection takes ~85 KB of heap (TLS session + message buffer). The full-RAM boards (esp32s3, esp32s3_zero, ws_lcd_200, ws_lcd_154, sensecap_indicator) run two printers comfortably. The low-RAM boards (**CYD**, **TZT L1435-2.4**, **ESP32-C3**) ship with a single printer slot by default, but expose an **experimental opt-in 2-printer mode** in **Printer Settings** - try it if you really need two, but expect tighter memory and the occasional disconnect under load.
 
 ### Rotation Modes
 
@@ -333,7 +355,7 @@ When the printer comes back online, the backoff resets to normal immediately.
 
 | | |
 |---|---|
-| ![Power Monitoring](img/PowerMonitoring.png) | BambuHelper can display live power consumption from a **[Tasmota](https://tasmota.github.io/docs/)-flashed smart plug** connected to your printer. Tasmota is open-source firmware for ESP-based smart plugs that exposes a local HTTP API and MQTT - no cloud required.<br><br>**What it shows:**<br>- Live wattage in the bottom status bar on the idle and printing screens<br>- Total kWh used during the print job, shown on the "Print Complete" screen<br><br>**Setup:** open the web interface, go to **Power Monitoring**, enter the plug's local IP address, set your preferred poll interval (10-30s), and choose whether to alternate the watts display with the layer counter or always show watts.<br><br>**Requirements:** any Tasmota-flashed smart plug with energy monitoring (e.g. Sonoff S31, BlitzWolf BW-SHP6, Nous A1). The plug must be on your local network and reachable from the ESP32. No Tasmota MQTT broker needed - BambuHelper polls the HTTP API directly.<br><br>Future plans include automatic printer power-off based on nozzle temperature and idle time. |
+| ![Power Monitoring](img/PowerMonitoring.png) | BambuHelper can display live power consumption from a **[Tasmota](https://tasmota.github.io/docs/)-flashed smart plug** connected to your printer. Tasmota is open-source firmware for ESP-based smart plugs that exposes a local HTTP API and MQTT - no cloud required.<br><br>**What it shows:**<br>- Live wattage in the bottom status bar on the idle and printing screens<br>- Total kWh used during the print job, shown on the "Print Complete" screen<br><br>**Setup:** open the web interface, go to **Power Monitoring**, enter the plug's local IP address, set your preferred poll interval (10-30s), and choose whether to alternate the watts display with the layer counter or always show watts.<br><br>**Requirements:** any Tasmota-flashed smart plug with energy monitoring (e.g. Sonoff S31, BlitzWolf BW-SHP6, Nous A1). The plug must be on your local network and reachable from the ESP32. No Tasmota MQTT broker needed - BambuHelper polls the HTTP API directly.<br><br>**Auto power-off:** each plug can power itself off N minutes (1-240) after the print finishes, with a 50&nbsp;°C nozzle gate so it never triggers while the hot end is hot. Configure under **Power Monitoring -> Auto-off**. |
 
 ## Troubleshooting
 

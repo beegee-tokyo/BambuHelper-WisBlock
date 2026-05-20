@@ -139,7 +139,8 @@ void P1S_ext_Init()
 	}
 
 	// Use Tasmota IP for now
-	strcpy(P1S_Ext_Settings.ip, tasmotaSettings.ip);
+	strcpy(P1S_Ext_Settings.ip, tasmotaSettings[0].ip);
+	// strcpy(P1S_Ext_Settings.ip, "192.168.0.74");
 	P1S_Ext_Settings.enabled = true;
 
 	Serial.printf("Using %s/api/data\n", P1S_Ext_Settings.ip);

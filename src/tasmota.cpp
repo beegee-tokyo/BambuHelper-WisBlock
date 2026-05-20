@@ -1,56 +1,135 @@
 #include "tasmota.h"
 #include "settings.h"
 #include "wifi_manager.h"
+#include "bambu_mqtt.h"
+#include "bambu_state.h"
+#include "config.h"
+#include <Arduino.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include <Preferences.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <math.h>
 
-#define TASMOTA_TIMEOUT_MS        1500      // HTTP timeout when plug is known-online
-#define TASMOTA_TIMEOUT_FAST_MS          700      // shorter timeout once plug is confirmed offline
-#define TASMOTA_STALE_MS         90000UL   // consider offline after 90s without data
-#define TASMOTA_OFFLINE_RETRY_MS       10000UL   // retry quickly after confirmed offline
-#define TASMOTA_DEFAULT_INTERVAL   10      // seconds, used when pollInterval not set
-#define TASMOTA_FAILS_BEFORE_OFFLINE      3      // tolerate a few transient misses before hiding watts
+#define TASMOTA_TIMEOUT_MS              1500
+#define TASMOTA_TIMEOUT_FAST_MS          700
+#define TASMOTA_STALE_MS               90000UL
+#define TASMOTA_DEFAULT_INTERVAL_S       10
+#define TASMOTA_FAILS_BEFORE_OFFLINE      3
 
-static volatile float    g_watts              = -1.0f;
-static volatile float    g_todayKwh           = -1.0f;
-static volatile float    g_yesterdayKwh       = -1.0f;
-static volatile float    g_printStartTodayKwh = -1.0f;
-static volatile float    g_printUsedKwh       = -1.0f;
-static volatile uint32_t g_lastUpdateMs       = 0;
-static volatile bool     g_kwhChanged         = false;
-static volatile bool     g_plugOffline        = false;
-static volatile uint8_t  g_failCount          = 0;
+// Auto-off temperature threshold (Celsius). Hardcoded per design ("Time +
+// nozzle only"); bed temp intentionally not checked.
+#define TASMOTA_AUTO_OFF_NOZZLE_MAX_C    50.0f
 
+struct TasmotaPlugRuntime {
+  float    watts;
+  float    todayKwh;
+  float    yesterdayKwh;
+  float    totalKwh;
+  float    printStartTotalKwh;
+  float    printUsedKwh;
+  uint32_t lastOkMs;        // millis() of last successful poll
+  uint32_t nextPollMs;
+  uint8_t  failCount;
+  bool     plugOffline;
+  bool     kwhChanged;
+  uint32_t finishEnteredMs; // millis() when this plug's printer entered FINISH
+  bool     autoOffFired;    // latch: true once Power Off has succeeded for this cycle
+};
+
+static TasmotaPlugRuntime g_rt[TASMOTA_PLUG_COUNT];
 static TaskHandle_t g_taskHandle = NULL;
 
-static void markPollFailure() {
-  if (g_failCount < 255) g_failCount++;
-  if (g_failCount >= TASMOTA_FAILS_BEFORE_OFFLINE) {
-    g_plugOffline = true;
+// ---------------------------------------------------------------------------
+//  Persistence for last-print kWh (tsm{i}_lpk in NVS)
+// ---------------------------------------------------------------------------
+static void persistLastPrintKwh(uint8_t i, float v) {
+  Preferences p;
+  if (!p.begin(NVS_NAMESPACE, false)) return;
+  char key[12]; snprintf(key, sizeof(key), "tsm%u_lpk", (unsigned)i);
+  p.putFloat(key, v);
+  p.end();
+}
+
+static float loadLastPrintKwh(uint8_t i) {
+  Preferences p;
+  if (!p.begin(NVS_NAMESPACE, true)) return -1.0f;
+  char key[12]; snprintf(key, sizeof(key), "tsm%u_lpk", (unsigned)i);
+  float v = p.getFloat(key, -1.0f);
+  p.end();
+  return v;
+}
+
+// ---------------------------------------------------------------------------
+//  Plug <-> printer-slot mapping
+// ---------------------------------------------------------------------------
+uint8_t tasmotaPlugForPrinterSlot(uint8_t slot) {
+#if TASMOTA_PLUG_COUNT == 1
+  if (!tasmotaSettings[0].enabled) return 0xFF;
+  uint8_t a = tasmotaSettings[0].assignedSlot;
+  if (a == 255) return (slot == 0) ? 0 : 0xFF;       // "Any" -> canonical slot 0
+  return (a == slot) ? 0 : 0xFF;
+#else
+  if (slot >= TASMOTA_PLUG_COUNT) return 0xFF;
+  return tasmotaSettings[slot].enabled ? slot : 0xFF;
+#endif
+}
+
+uint8_t tasmotaPrinterSlotForPlug(uint8_t plug) {
+#if TASMOTA_PLUG_COUNT == 1
+  uint8_t a = tasmotaSettings[0].assignedSlot;
+  if (a != 255 && a >= MAX_ACTIVE_PRINTERS) return 0;
+  return (a == 255) ? 0 : a;
+#else
+  return plug;
+#endif
+}
+
+// "Visible" plug for a slot — LOOSE matching. Used by display helpers so the
+// "Any" config still shows watts on both printer screens.
+static uint8_t visiblePlugForSlot(uint8_t slot) {
+#if TASMOTA_PLUG_COUNT == 1
+  if (!tasmotaSettings[0].enabled) return 0xFF;
+  uint8_t a = tasmotaSettings[0].assignedSlot;
+  if (a == 255 || a == slot) return 0;
+  return 0xFF;
+#else
+  if (slot >= TASMOTA_PLUG_COUNT) return 0xFF;
+  return tasmotaSettings[slot].enabled ? slot : 0xFF;
+#endif
+}
+
+// ---------------------------------------------------------------------------
+//  Polling + Status 10 parser
+// ---------------------------------------------------------------------------
+static void markPollFailure(uint8_t i) {
+  if (g_rt[i].failCount < 255) g_rt[i].failCount++;
+  if (g_rt[i].failCount >= TASMOTA_FAILS_BEFORE_OFFLINE) {
+    g_rt[i].plugOffline = true;
   }
 }
 
-static void doPoll() {
-  if (!tasmotaSettings.enabled || tasmotaSettings.ip[0] == '\0') return;
+static void pollOne(uint8_t i) {
+  TasmotaSettings& s = tasmotaSettings[i];
+  if (!s.enabled || s.ip[0] == '\0') return;
 
   char url[64];
-  snprintf(url, sizeof(url), "http://%s/cm?cmnd=Status%%2010", tasmotaSettings.ip);
+  snprintf(url, sizeof(url), "http://%s/cm?cmnd=Status%%2010", s.ip);
 
   HTTPClient http;
-  http.setTimeout(g_plugOffline ? TASMOTA_TIMEOUT_FAST_MS : TASMOTA_TIMEOUT_MS);
+  http.setTimeout(g_rt[i].plugOffline ? TASMOTA_TIMEOUT_FAST_MS : TASMOTA_TIMEOUT_MS);
   if (!http.begin(url)) {
-    Serial.printf("[Tasmota] begin failed: %s\n", url);
-    markPollFailure();
+    Serial.printf("[Tasmota %u] begin failed: %s\n", i, url);
+    markPollFailure(i);
     return;
   }
 
   int code = http.GET();
   if (code != 200) {
-    Serial.printf("[Tasmota] HTTP %d from %s\n", code, tasmotaSettings.ip);
+    Serial.printf("[Tasmota %u] HTTP %d from %s\n", i, code, s.ip);
     http.end();
-    markPollFailure();
+    markPollFailure(i);
     return;
   }
 
@@ -60,62 +139,166 @@ static void doPoll() {
   JsonDocument doc;
   DeserializationError err = deserializeJson(doc, body);
   if (err) {
-    Serial.printf("[Tasmota] JSON parse error: %s\n", err.c_str());
-    markPollFailure();
+    Serial.printf("[Tasmota %u] JSON parse error: %s\n", i, err.c_str());
+    markPollFailure(i);
     return;
   }
 
   JsonVariant energy = doc["StatusSNS"]["ENERGY"];
   if (energy.isNull()) energy = doc["ENERGY"];
   if (energy.isNull()) {
-    Serial.println("[Tasmota] ENERGY object missing in response");
-    markPollFailure();
+    Serial.printf("[Tasmota %u] ENERGY object missing in response\n", i);
+    markPollFailure(i);
     return;
   }
 
   JsonVariant power     = energy["Power"];
   JsonVariant today     = energy["Today"];
   JsonVariant yesterday = energy["Yesterday"];
+  JsonVariant total     = energy["Total"];
 
   if (power.isNull()) {
-    Serial.println("[Tasmota] Power field missing");
-    markPollFailure();
+    Serial.printf("[Tasmota %u] Power field missing\n", i);
+    markPollFailure(i);
     return;
   }
 
   float newWatts = power.as<float>();
   float newToday = today.isNull()     ? -1.0f : today.as<float>();
   float newYest  = yesterday.isNull() ? -1.0f : yesterday.as<float>();
+  float newTotal = total.isNull()     ? -1.0f : total.as<float>();
 
-  g_watts        = newWatts;
-  g_lastUpdateMs = millis();
-  g_failCount    = 0;
-  g_plugOffline  = false;
+  // Fallback: if plug omits Total (very old Tasmota firmware), use Today as
+  // a degraded same-day odometer so per-print math still works within a day.
+  if (newTotal < 0.0f && newToday >= 0.0f) newTotal = newToday;
 
-  if (newToday >= 0.0f && newToday != (float)g_todayKwh) {
-    g_todayKwh   = newToday;
-    g_kwhChanged = true;
+  g_rt[i].watts       = newWatts;
+  g_rt[i].lastOkMs    = millis();
+  g_rt[i].failCount   = 0;
+  g_rt[i].plugOffline = false;
+
+  if (newToday >= 0.0f && newToday != g_rt[i].todayKwh) {
+    g_rt[i].todayKwh   = newToday;
+    g_rt[i].kwhChanged = true;
   }
-  if (newYest >= 0.0f) g_yesterdayKwh = newYest;
+  if (newYest >= 0.0f) g_rt[i].yesterdayKwh = newYest;
+  if (newTotal >= 0.0f) g_rt[i].totalKwh = newTotal;
 
-  Serial.printf("[Tasmota] Power=%.0fW, Today=%.3fkWh, Yesterday=%.3fkWh\n",
-                newWatts, newToday, newYest);
+  Serial.printf("[Tasmota %u] Power=%.0fW Today=%.3fkWh Total=%.3fkWh\n",
+                i, newWatts, newToday, newTotal);
 }
 
-static void pollTask(void *) {
-  while (true) {
-    if (isWiFiConnected()) {
-      doPoll();
+// ---------------------------------------------------------------------------
+//  Auto power-off
+// ---------------------------------------------------------------------------
+static bool sendPowerOff(uint8_t i) {
+  TasmotaSettings& s = tasmotaSettings[i];
+  if (s.ip[0] == '\0') return false;
+
+  char url[64];
+  snprintf(url, sizeof(url), "http://%s/cm?cmnd=Power%%20Off", s.ip);
+
+  HTTPClient http;
+  http.setTimeout(TASMOTA_TIMEOUT_MS);
+  if (!http.begin(url)) return false;
+  int code = http.GET();
+  http.end();
+
+  if (code == 200) {
+    Serial.printf("[Tasmota %u] Auto-off sent successfully\n", i);
+    return true;
+  }
+  Serial.printf("[Tasmota %u] Auto-off HTTP %d\n", i, code);
+  return false;
+}
+
+static void evaluateAutoOff(uint8_t i) {
+  TasmotaSettings& s = tasmotaSettings[i];
+  if (!s.enabled) return;
+
+  uint8_t slot = tasmotaPrinterSlotForPlug(i);
+  if (slot >= MAX_ACTIVE_PRINTERS) return;
+  if (!isPrinterConfigured(slot)) return;
+
+  BambuState& ps = printers[slot].state;
+  uint32_t now = millis();
+
+  bool mqttFresh = ps.connected
+                && ps.lastPrintDataMs > 0
+                && (now - ps.lastPrintDataMs) < BAMBU_STALE_TIMEOUT;
+
+  if (ps.gcodeStateId == GCODE_FINISH && mqttFresh) {
+    if (g_rt[i].finishEnteredMs == 0) {
+      g_rt[i].finishEnteredMs = now;
+      Serial.printf("[Tasmota %u] FINISH detected on slot %u, auto-off timer armed\n", i, slot);
     }
-    uint32_t intervalMs = g_plugOffline
-      ? TASMOTA_OFFLINE_RETRY_MS
-      : (uint32_t)(tasmotaSettings.pollInterval > 0
-                   ? tasmotaSettings.pollInterval
-                   : TASMOTA_DEFAULT_INTERVAL) * 1000;
-    vTaskDelay(pdMS_TO_TICKS(intervalMs));
+    uint32_t elapsedMin = (now - g_rt[i].finishEnteredMs) / 60000UL;
+    if (s.autoOffEnabled
+        && !g_rt[i].autoOffFired
+        && elapsedMin >= s.autoOffDelayMin
+        && ps.nozzleTemp > 0.0f
+        && ps.nozzleTemp < TASMOTA_AUTO_OFF_NOZZLE_MAX_C
+        && !ps.ams.anyDrying
+        && !g_rt[i].plugOffline
+        && g_rt[i].lastOkMs > 0) {
+      Serial.printf("[Tasmota %u] Auto-off conditions met (elapsed=%u min, nozzle=%.1fC)\n",
+                    i, (unsigned)elapsedMin, ps.nozzleTemp);
+      if (sendPowerOff(i)) {
+        g_rt[i].autoOffFired = true;
+      }
+    }
+  } else if (isPrintingGcodeState(ps.gcodeStateId)) {
+    // New print -> reset timer and latch
+    if (g_rt[i].finishEnteredMs != 0 || g_rt[i].autoOffFired) {
+      Serial.printf("[Tasmota %u] New print detected on slot %u, auto-off reset\n", i, slot);
+    }
+    g_rt[i].finishEnteredMs = 0;
+    g_rt[i].autoOffFired = false;
+  }
+  // else (!mqttFresh or other states): hold finishEnteredMs as-is, do not fire
+}
+
+// ---------------------------------------------------------------------------
+//  FreeRTOS task — per-plug scheduling
+// ---------------------------------------------------------------------------
+static void pollTask(void *) {
+  for (;;) {
+    if (!isWiFiConnected()) {
+      vTaskDelay(pdMS_TO_TICKS(2000));
+      continue;
+    }
+    uint32_t now = millis();
+    uint32_t earliestNext = now + 30000;
+    bool anyEnabled = false;
+    for (uint8_t i = 0; i < TASMOTA_PLUG_COUNT; ++i) {
+      if (!tasmotaSettings[i].enabled) continue;
+      anyEnabled = true;
+      if ((int32_t)(now - g_rt[i].nextPollMs) >= 0) {
+        pollOne(i);
+        evaluateAutoOff(i);
+        uint8_t pi = tasmotaSettings[i].pollInterval;
+        if (pi < 10) pi = 10;
+        if (pi > 60) pi = 60;
+        g_rt[i].nextPollMs = millis() + (uint32_t)pi * 1000UL;
+      }
+      if ((int32_t)(g_rt[i].nextPollMs - earliestNext) < 0) {
+        earliestNext = g_rt[i].nextPollMs;
+      }
+    }
+    if (!anyEnabled) {
+      vTaskDelay(pdMS_TO_TICKS(2000));
+      continue;
+    }
+    int32_t sleepMs = (int32_t)(earliestNext - millis());
+    if (sleepMs < 200) sleepMs = 200;
+    if (sleepMs > 30000) sleepMs = 30000;
+    vTaskDelay(pdMS_TO_TICKS(sleepMs));
   }
 }
 
+// ---------------------------------------------------------------------------
+//  Lifecycle
+// ---------------------------------------------------------------------------
 void tasmotaInit() {
   if (g_taskHandle != NULL) {
     vTaskSuspend(g_taskHandle);
@@ -123,69 +306,131 @@ void tasmotaInit() {
     g_taskHandle = NULL;
   }
 
-  g_watts              = -1.0f;
-  g_todayKwh           = -1.0f;
-  g_yesterdayKwh       = -1.0f;
-  g_printStartTodayKwh = -1.0f;
-  g_printUsedKwh       = -1.0f;
-  g_lastUpdateMs       = 0;
-  g_kwhChanged         = false;
-  g_plugOffline        = false;
-  g_failCount          = 0;
+  for (uint8_t i = 0; i < TASMOTA_PLUG_COUNT; ++i) {
+    g_rt[i] = {};
+    // Explicit "no data yet" sentinels. Zero would look like valid 0 W / 0 kWh
+    // readings before the first poll, and could let an early markEnd() persist
+    // a bogus 0-kWh print.
+    g_rt[i].watts              = -1.0f;
+    g_rt[i].todayKwh           = -1.0f;
+    g_rt[i].yesterdayKwh       = -1.0f;
+    g_rt[i].totalKwh           = -1.0f;
+    g_rt[i].printStartTotalKwh = -1.0f;
+    g_rt[i].printUsedKwh       = loadLastPrintKwh(i);   // -1.0f if never recorded
+    g_rt[i].lastOkMs           = 0;
+    g_rt[i].nextPollMs         = 0;
+  }
 
-  if (tasmotaSettings.enabled && tasmotaSettings.ip[0] != '\0') {
+  bool anyEnabled = false;
+  for (uint8_t i = 0; i < TASMOTA_PLUG_COUNT; ++i) {
+    if (tasmotaSettings[i].enabled && tasmotaSettings[i].ip[0] != '\0') {
+      anyEnabled = true; break;
+    }
+  }
+  if (anyEnabled) {
     xTaskCreate(pollTask, "tasmota", 6144, NULL, 1, &g_taskHandle);
   }
 }
 
-float tasmotaGetWatts() {
-  return g_watts;
-}
-
-bool tasmotaIsOnline() {
-  if (!tasmotaSettings.enabled) return false;
-  if (g_lastUpdateMs == 0) return false;
-  return (millis() - g_lastUpdateMs) < TASMOTA_STALE_MS;
-}
-
-bool tasmotaIsActiveForSlot(uint8_t slot) {
-  if (!tasmotaIsOnline()) return false;
-  return (tasmotaSettings.assignedSlot == 255 || tasmotaSettings.assignedSlot == slot);
-}
-
-void tasmotaMarkPrintStart() {
-  if (!tasmotaSettings.enabled) return;
-  g_printStartTodayKwh = g_todayKwh;
-  g_printUsedKwh       = -1.0f;
-  Serial.printf("[Tasmota] Print start marked, Today=%.3fkWh\n", (float)g_printStartTodayKwh);
-}
-
-void tasmotaMarkPrintEnd() {
-  if (!tasmotaSettings.enabled) return;
-  float start = g_printStartTodayKwh;
-  float today = g_todayKwh;
-  float yest  = g_yesterdayKwh;
-
-  if (start < 0.0f || today < 0.0f) {
-    Serial.println("[Tasmota] Print end: no baseline, skipping");
+// ---------------------------------------------------------------------------
+//  Print start/end marks (per-plug)
+// ---------------------------------------------------------------------------
+void tasmotaMarkPrintStart(uint8_t i) {
+  if (i >= TASMOTA_PLUG_COUNT) return;
+  if (!tasmotaSettings[i].enabled) return;
+  if (g_rt[i].totalKwh < 0.0f) {
+    // No successful poll yet — refuse to baseline. markEnd will see start<0
+    // and skip persisting a bogus 0-kWh print.
+    g_rt[i].printStartTotalKwh = -1.0f;
+    g_rt[i].printUsedKwh = -1.0f;
+    Serial.printf("[Tasmota %u] Print start: no poll yet, baseline unknown\n", i);
     return;
   }
+  g_rt[i].printStartTotalKwh = g_rt[i].totalKwh;
+  g_rt[i].printUsedKwh = -1.0f;
+  Serial.printf("[Tasmota %u] Print start marked, Total=%.3fkWh\n", i, g_rt[i].totalKwh);
+}
 
-  if (today >= start) {
-    g_printUsedKwh = today - start;
-  } else if (yest >= 0.0f) {
-    g_printUsedKwh = (yest - start) + today;
+void tasmotaMarkPrintEnd(uint8_t i) {
+  if (i >= TASMOTA_PLUG_COUNT) return;
+  if (!tasmotaSettings[i].enabled) return;
+  float start = g_rt[i].printStartTotalKwh;
+  float total = g_rt[i].totalKwh;
+  if (start < 0.0f || total < 0.0f) {
+    Serial.printf("[Tasmota %u] Print end: no baseline, keeping previous lpk\n", i);
+    return;
+  }
+  if (total >= start) {
+    g_rt[i].printUsedKwh = total - start;
+    g_rt[i].kwhChanged   = true;
+    persistLastPrintKwh(i, g_rt[i].printUsedKwh);
+    Serial.printf("[Tasmota %u] Print end marked, used=%.3fkWh\n", i, g_rt[i].printUsedKwh);
+  }
+}
+
+// ---------------------------------------------------------------------------
+//  Display-side accessors (slot-keyed)
+// ---------------------------------------------------------------------------
+bool tasmotaIsActiveForSlot(uint8_t slot) {
+  uint8_t p = visiblePlugForSlot(slot);
+  if (p == 0xFF) return false;
+  if (g_rt[p].lastOkMs == 0) return false;
+  return (millis() - g_rt[p].lastOkMs) < TASMOTA_STALE_MS;
+}
+
+float tasmotaGetWattsForSlot(uint8_t slot) {
+  uint8_t p = visiblePlugForSlot(slot);
+  if (p == 0xFF || g_rt[p].lastOkMs == 0) return 0.0f;
+  return g_rt[p].watts;
+}
+
+uint8_t tasmotaDisplayModeForSlot(uint8_t slot) {
+  uint8_t p = visiblePlugForSlot(slot);
+  if (p == 0xFF) return 0;
+  return tasmotaSettings[p].displayMode;
   }
 
-  Serial.printf("[Tasmota] Print end marked, used=%.3fkWh\n", (float)g_printUsedKwh);
+float tasmotaGetPrintKwhUsedForSlot(uint8_t slot) {
+  uint8_t p = tasmotaPlugForPrinterSlot(slot);  // STRICT
+  if (p == 0xFF) return -1.0f;
+  return g_rt[p].printUsedKwh;
+  }
+
+float tasmotaTariffForSlot(uint8_t /*slot*/) {
+  // Tariff is global (one electricity provider, one rate). Slot parameter
+  // kept for callsite compatibility but no longer routes through the plug
+  // mapping — the kWh check upstream already gates whether cost is drawn.
+  return tasmotaTariffPerKwh;
 }
 
-float tasmotaGetPrintKwhUsed() {
-  return g_printUsedKwh;
+const char* tasmotaCurrencySymbol() {
+  return tasmotaCurrency;
 }
 
-bool tasmotaKwhChanged() {
-  if (!g_kwhChanged) return false;
-  g_kwhChanged = false;
+bool tasmotaKwhChangedForSlot(uint8_t slot) {
+  uint8_t p = tasmotaPlugForPrinterSlot(slot);  // STRICT
+  if (p == 0xFF) return false;
+  if (!g_rt[p].kwhChanged) return false;
+  g_rt[p].kwhChanged = false;
   return true;
+}
+
+void tasmotaGetStats(uint8_t plug, TasmotaPlugStatsView* out) {
+  if (!out) return;
+  if (plug >= TASMOTA_PLUG_COUNT) {
+    out->online = false;
+    out->watts = -1.0f;
+    out->todayKwh = -1.0f;
+    out->totalKwh = -1.0f;
+    out->printUsedKwh = -1.0f;
+    return;
+  }
+  bool online = tasmotaSettings[plug].enabled
+             && g_rt[plug].lastOkMs > 0
+             && (millis() - g_rt[plug].lastOkMs) < TASMOTA_STALE_MS;
+  out->online       = online;
+  out->watts        = g_rt[plug].watts;
+  out->todayKwh     = g_rt[plug].todayKwh;
+  out->totalKwh     = g_rt[plug].totalKwh;
+  out->printUsedKwh = g_rt[plug].printUsedKwh;
 }

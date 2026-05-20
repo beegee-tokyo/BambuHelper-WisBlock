@@ -35,7 +35,9 @@ LedSettings ledSettings = {
   /*pauseBreathing*/      false,
   /*errorStrobe*/         false,
 };
-TasmotaSettings tasmotaSettings = { false, "", 0, 30, 255 };
+TasmotaSettings tasmotaSettings[TASMOTA_PLUG_COUNT] = {};
+float tasmotaTariffPerKwh = 0.0f;
+char tasmotaCurrency[8] = "\xE2\x82\xAC";  // "€" UTF-8 default
 
 // Experimental: opt-in 2-printer mode on BOARD_LOW_RAM. Local-only -
 // NOT included in /settings/export to avoid propagating an unsafe mode
@@ -133,12 +135,12 @@ void defaultDisplaySettings(DisplaySettings& ds) {
   ds.pongClock = false;
   ds.smallLabels = false;
   ds.showTimeRemaining = false;
+  ds.fanMatchPrinter = true;
   ds.invertColors = false;
   ds.cydPanelClassic = false;
   ds.clockTimeColor = CLR_TEXT;
   ds.clockDateColor = CLR_TEXT_DIM;
   ds.showBatteryIndicator = true;
-  ds.amsView = false;
 
   // Progress: green arc, green label, white value
   ds.progress = { CLR_GREEN, CLR_GREEN, CLR_TEXT };
@@ -249,9 +251,28 @@ void loadSettings() {
       }
     }
 
+    // AMS view (per-printer): 240x240 only, replaces gauge row 2 with AMS strip
+    snprintf(key, sizeof(key), "p%d_amsv", i);
+    cfg.amsView = prefs.getBool(key, false);
+
     // Zero out state
     memset(&printers[i].state, 0, sizeof(BambuState));
     setPrinterGcodeStateCanonical(printers[i].state, GCODE_UNKNOWN);
+  }
+
+  // One-shot migration: copy legacy global dsp_amsv to every printer slot
+  // that doesn't already have its own value, then remove the legacy key.
+  if (prefs.isKey("dsp_amsv")) {
+    bool legacy = prefs.getBool("dsp_amsv", false);
+    for (uint8_t i = 0; i < MAX_PRINTERS; i++) {
+      char key[16];
+      snprintf(key, sizeof(key), "p%d_amsv", i);
+      if (!prefs.isKey(key)) {
+        prefs.putBool(key, legacy);
+        printers[i].config.amsView = legacy;
+      }
+    }
+    prefs.remove("dsp_amsv");
   }
 
   // Display settings
@@ -265,12 +286,12 @@ void loadSettings() {
   dispSettings.pongClock = prefs.getBool("dsp_pong", def.pongClock);
   dispSettings.smallLabels = prefs.getBool("dsp_slbl", def.smallLabels);
   dispSettings.showTimeRemaining = prefs.getBool("dsp_shtire", def.showTimeRemaining);
+  dispSettings.fanMatchPrinter = prefs.getBool("dsp_fanmp", def.fanMatchPrinter);
   dispSettings.invertColors = prefs.getBool("dsp_inv", def.invertColors);
   dispSettings.cydPanelClassic = prefs.getBool("dsp_cydcls", def.cydPanelClassic);
   dispSettings.clockTimeColor = prefs.getUShort("dsp_clkt", CLR_TEXT);
   dispSettings.clockDateColor = prefs.getUShort("dsp_clkd", CLR_TEXT_DIM);
   dispSettings.showBatteryIndicator = prefs.getBool("dsp_bat", def.showBatteryIndicator);
-  dispSettings.amsView = prefs.getBool("dsp_amsv", def.amsView);
 
   loadGaugeColors("gc_prg", dispSettings.progress, def.progress);
   loadGaugeColors("gc_noz", dispSettings.nozzle, def.nozzle);
@@ -388,12 +409,73 @@ void loadSettings() {
   // Cloud email (display only)
   strlcpy(cloudEmail, prefs.getString("cl_email", "").c_str(), sizeof(cloudEmail));
 
-  // Tasmota power monitoring
-  tasmotaSettings.enabled = prefs.getBool("tsm_en", false);
-  strlcpy(tasmotaSettings.ip, prefs.getString("tsm_ip", "").c_str(), sizeof(tasmotaSettings.ip));
-  tasmotaSettings.displayMode = prefs.getUChar("tsm_dm", 0);
-  tasmotaSettings.pollInterval = prefs.getUChar("tsm_pi", 10);
-  tasmotaSettings.assignedSlot = prefs.getUChar("tsm_slot", 255);
+  // Tasmota power monitoring — array of N plugs with numbered NVS keys
+  // One-shot migration from legacy singleton keys (tsm_en/ip/dm/pi/slot) into
+  // numbered keys (tsm0_*, tsm1_*). Runs once when legacy keys exist and
+  // tsm0_en is absent. Legacy keys are removed after migration completes.
+  if (prefs.isKey("tsm_en") && !prefs.isKey("tsm0_en")) {
+    bool    legEn   = prefs.getBool ("tsm_en",   false);
+    String  legIp   = prefs.getString("tsm_ip",  "");
+    uint8_t legDm   = prefs.getUChar("tsm_dm",   0);
+    uint8_t legPi   = prefs.getUChar("tsm_pi",   10);
+    uint8_t legSlot = prefs.getUChar("tsm_slot", 255);
+    if (legSlot != 255 && legSlot >= MAX_ACTIVE_PRINTERS) legSlot = 255;
+
+#if TASMOTA_PLUG_COUNT == 1
+    // Single-plug build: copy to plug 0 and keep assignedSlot
+    prefs.putBool ("tsm0_en",  legEn);
+    prefs.putString("tsm0_ip", legIp);
+    prefs.putUChar("tsm0_dm",  legDm);
+    prefs.putUChar("tsm0_pi",  legPi);
+    prefs.putUChar("tsm0_as",  legSlot);
+#else
+    // Dual-plug build: route to plug index 0 or 1 based on legacy slot
+    uint8_t targetPlug = (legSlot == 1) ? 1 : 0;
+    char k[12];
+    snprintf(k, sizeof(k), "tsm%u_en", targetPlug);  prefs.putBool(k, legEn);
+    snprintf(k, sizeof(k), "tsm%u_ip", targetPlug);  prefs.putString(k, legIp);
+    snprintf(k, sizeof(k), "tsm%u_dm", targetPlug);  prefs.putUChar(k, legDm);
+    snprintf(k, sizeof(k), "tsm%u_pi", targetPlug);  prefs.putUChar(k, legPi);
+#endif
+    prefs.remove("tsm_en");
+    prefs.remove("tsm_ip");
+    prefs.remove("tsm_dm");
+    prefs.remove("tsm_pi");
+    prefs.remove("tsm_slot");
+    Serial.println("[SETTINGS] Migrated legacy Tasmota keys to numbered scheme");
+  }
+
+  for (uint8_t i = 0; i < TASMOTA_PLUG_COUNT; i++) {
+    char k[12];
+    snprintf(k, sizeof(k), "tsm%u_en",  i); tasmotaSettings[i].enabled = prefs.getBool(k, false);
+    snprintf(k, sizeof(k), "tsm%u_ip",  i); strlcpy(tasmotaSettings[i].ip, prefs.getString(k, "").c_str(), sizeof(tasmotaSettings[i].ip));
+    snprintf(k, sizeof(k), "tsm%u_dm",  i); tasmotaSettings[i].displayMode = prefs.getUChar(k, 0);
+    snprintf(k, sizeof(k), "tsm%u_pi",  i); {
+      uint8_t pi = prefs.getUChar(k, 10);
+      if (pi < 10 || pi > 60) pi = 10;
+      tasmotaSettings[i].pollInterval = pi;
+    }
+    snprintf(k, sizeof(k), "tsm%u_ao",  i); tasmotaSettings[i].autoOffEnabled = prefs.getBool(k, false);
+    snprintf(k, sizeof(k), "tsm%u_ad",  i); {
+      uint8_t ad = prefs.getUChar(k, 10);
+      if (ad < 1 || ad > 240) ad = 10;
+      tasmotaSettings[i].autoOffDelayMin = ad;
+    }
+#if TASMOTA_PLUG_COUNT == 1
+    snprintf(k, sizeof(k), "tsm%u_as",  i); {
+      uint8_t a = prefs.getUChar(k, 255);
+      if (a != 255 && a >= MAX_ACTIVE_PRINTERS) a = 255;
+      tasmotaSettings[i].assignedSlot = a;
+    }
+#endif
+  }
+  strlcpy(tasmotaCurrency, prefs.getString("tsm_cur", "\xE2\x82\xAC").c_str(), sizeof(tasmotaCurrency));
+  {
+    float t = prefs.getFloat("tsm_tariff", 0.0f);
+    if (t < 0.0f) t = 0.0f;
+    if (t > 10.0f) t = 10.0f;
+    tasmotaTariffPerKwh = t;
+  }
 
   // Experimental dual-printer override on BOARD_LOW_RAM (local-only, not exported)
   dualPrinterUnsafe = prefs.getBool("dualp", false);
@@ -424,12 +506,12 @@ void saveSettings() {
   prefs.putBool("dsp_pong", dispSettings.pongClock);
   prefs.putBool("dsp_slbl", dispSettings.smallLabels);
   prefs.putBool("dsp_shtire", dispSettings.showTimeRemaining);
+  prefs.putBool("dsp_fanmp", dispSettings.fanMatchPrinter);
   prefs.putBool("dsp_inv", dispSettings.invertColors);
   prefs.putBool("dsp_cydcls", dispSettings.cydPanelClassic);
   prefs.putUShort("dsp_clkt", dispSettings.clockTimeColor);
   prefs.putUShort("dsp_clkd", dispSettings.clockDateColor);
   prefs.putBool("dsp_bat", dispSettings.showBatteryIndicator);
-  prefs.putBool("dsp_amsv", dispSettings.amsView);
 
   saveGaugeColors("gc_prg", dispSettings.progress);
   saveGaugeColors("gc_noz", dispSettings.nozzle);
@@ -464,12 +546,34 @@ void saveSettings() {
   prefs.putUChar("dp_nbright", dpSettings.nightBrightness);
   prefs.putUChar("dp_ssbright", dpSettings.screensaverBrightness);
 
-  // Tasmota power monitoring
-  prefs.putBool("tsm_en", tasmotaSettings.enabled);
-  prefs.putString("tsm_ip", tasmotaSettings.ip);
-  prefs.putUChar("tsm_dm", tasmotaSettings.displayMode);
-  prefs.putUChar("tsm_pi", tasmotaSettings.pollInterval);
-  prefs.putUChar("tsm_slot", tasmotaSettings.assignedSlot);
+  // Tasmota power monitoring — numbered keys per plug
+  for (uint8_t i = 0; i < TASMOTA_PLUG_COUNT; i++) {
+    char k[12];
+    // Clamp on save too in case anything ever assigns out-of-range values
+    uint8_t pi = tasmotaSettings[i].pollInterval;
+    if (pi < 10 || pi > 60) pi = 10;
+    uint8_t ad = tasmotaSettings[i].autoOffDelayMin;
+    if (ad < 1 || ad > 240) ad = 10;
+
+    snprintf(k, sizeof(k), "tsm%u_en",  i); prefs.putBool(k, tasmotaSettings[i].enabled);
+    snprintf(k, sizeof(k), "tsm%u_ip",  i); prefs.putString(k, tasmotaSettings[i].ip);
+    snprintf(k, sizeof(k), "tsm%u_dm",  i); prefs.putUChar(k, tasmotaSettings[i].displayMode);
+    snprintf(k, sizeof(k), "tsm%u_pi",  i); prefs.putUChar(k, pi);
+    snprintf(k, sizeof(k), "tsm%u_ao",  i); prefs.putBool(k, tasmotaSettings[i].autoOffEnabled);
+    snprintf(k, sizeof(k), "tsm%u_ad",  i); prefs.putUChar(k, ad);
+#if TASMOTA_PLUG_COUNT == 1
+    uint8_t a = tasmotaSettings[i].assignedSlot;
+    if (a != 255 && a >= MAX_ACTIVE_PRINTERS) a = 255;
+    snprintf(k, sizeof(k), "tsm%u_as",  i); prefs.putUChar(k, a);
+#endif
+  }
+  prefs.putString("tsm_cur", tasmotaCurrency);
+  {
+    float t = tasmotaTariffPerKwh;
+    if (t < 0.0f) t = 0.0f;
+    if (t > 10.0f) t = 10.0f;
+    prefs.putFloat("tsm_tariff", t);
+  }
 
   // Experimental dual-printer override on BOARD_LOW_RAM (local-only, not exported)
   prefs.putBool("dualp", dualPrinterUnsafe);
@@ -510,6 +614,9 @@ void savePrinterConfig(uint8_t index) {
 
   snprintf(key, sizeof(key), "p%d_slots", index);
   prefs.putBytes(key, cfg.gaugeSlots, GAUGE_SLOT_COUNT);
+
+  snprintf(key, sizeof(key), "p%d_amsv", index);
+  prefs.putBool(key, cfg.amsView);
 
   if (needOpen) prefs.end();
 }
